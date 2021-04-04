@@ -51,3 +51,6 @@ var spec = {
         ],
     }
 }
+
+if (!this.module) module = {}
+module.exports = { spec }

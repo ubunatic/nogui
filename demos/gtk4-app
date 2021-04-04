@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+trap "stty echo -cbreak && echo 'tty restore'" EXIT
+stty cbreak -echo
+exec bash -c "gjs $0.min.js" -- "$@"

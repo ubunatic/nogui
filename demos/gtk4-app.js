@@ -1,11 +1,10 @@
-#!/usr/bin/env bash
-imports=imports// trap "stty echo -cbreak && echo 'tty restore'" EXIT; stty cbreak -echo; exec bash -c "gjs $0" -- "$@"
 
 imports.gi.versions.Gtk = '4.0'
-const { GLib, Gtk, Gdk, Gio } = imports.gi
-const ByteArray = imports.byteArray
+const { GLib, Gtk, Gdk, Gio } = require('gi')
+const ByteArray = require('bytearray')
+const system = require('system')
 
-let args  = [imports.system.programInvocationName].concat(ARGV)
+let args  = [system.programInvocationName].concat(ARGV)
 let flags = Gio.ApplicationFlags.HANDLES_COMMAND_LINE
 
 const path = (...o) => GLib.build_filenamev(o)
@@ -30,15 +29,17 @@ const src    = path(root, 'src')
 const demos  = path(root, 'demos')
 const assets = path(root, 'demos', 'assets')
 
+/*
 print(`adding ${src} to searchPath`)
 imports.searchPath.unshift(src)
 print(`adding ${demos} to searchPath`)
 imports.searchPath.unshift(demos)
+*/
 
-const nogui = imports.nogui
-const md2pango = imports.md2pango
-const repl = imports.repl
-const demo = imports.assets.demo
+const md2pango = require('md2pango')
+const nogui    = require('../src/nogui')
+const repl     = require('../src/repl')
+const demo     = require('./assets/demo')
 
 Gtk.init()
 
@@ -125,11 +126,11 @@ function startDemo(app) {
     window.ui   = ui
 }
 
-function main() {
+function runApp() {
     let app = new Gtk.Application({flags})
     app.connect('startup', () => startDemo(app) )
     app.connect('command-line', (app, cmd) => repl.startRepl(cmd.get_stdin()))
     app.run(null)    
 }
 
-if (file == 'gtk4-app.js') main()
+if (file.match(/(gtk4-app|demo).(webpack|min)?.js/)) runApp()

@@ -4,20 +4,23 @@
   "description": "Render GTK controls from NoGui Spec",
   "main": "src/nogui.js",
   "bin": {
-    "md2pango": "src/nogui.js"
+    "nogui-demo": "demos/gtk4-app.min.js"
   },
   "scripts": {
     "test": "./test.sh",
     "reuse": "reuse addheader -y 2021 src/nogui.js -l MIT -c 'Uwe Jugel'",
-    "watch": "nodemon --exec 'npm run build'",
-    "build": "webpack"
+    "watch": "nodemon --exec 'npm run build && npm run demo'",
+    "build": "webpack",
+    "demo":  "demos/gtk4-app",
+    "repl":  "src/repl"
   },
   "dependencies": {
     "md2pango": "^1.0.0"
   },
   "devDependencies": {
-    "nodemon": "^1.11.0",
-    "webpack": "^2.2.1"
+    "nodemon": "^2.0.0",
+    "webpack": "^5.30.0",
+    "webpack-cli": "^4.6.0"
   },
   "repository": {
     "type": "git",
