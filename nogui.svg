@@ -1,0 +1,14 @@
+<svg width="18.865mm" height="19.42mm" version="1.1" viewBox="0 0 18.865 19.42" xmlns="http://www.w3.org/2000/svg">
+ <g transform="translate(-50.476 -37.997)" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="50.476" y="37.997" width="18.865" height="19.42" rx="1.2807" ry="1.2807" stop-color="#000000" stroke-width=".026816"/>
+  <g transform="matrix(2.9276 0 0 2.9276 -112.45 -86.948)" fill="#fff" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round">
+   <path d="m58.973 43.148v2.6719h2.6719v-2.6719zm0.7414 0.74139h1.1891v1.1891h-1.1891z" stop-color="#000000" stroke-width=".028265"/>
+   <path d="m58.781 45.812v-2.6646h-0.7414v2.6646z" stop-color="#000000" stroke-width=".033207"/>
+   <path d="m56.851 45.812v-2.6646h-0.7414v2.6646z" stop-color="#000000" stroke-width=".033207"/>
+   <path d="m57.715 47.679v0.50555h-0.97447v-1.567h0.97447l0.62589 0.0035v-0.64383h-2.2419v2.8635h2.2419v-1.1551z" stop-color="#000000" stroke-width=".030594"/>
+   <path d="m58.781 45.495-1.9305-2.3474-0.7414 0.32339 1.9305 2.3412z" stop-color="#000000" stroke-width=".033207"/>
+   <path d="m60.163 45.977v2.0742h-0.97447v-2.0742h-0.64155v2.8635h2.2419v-2.8635z" stop-color="#000000" stroke-width=".030594"/>
+   <path d="m61.636 48.841v-2.8635h-0.64155v2.8635z" stop-color="#000000" stroke-width=".030594"/>
+  </g>
+ </g>
+</svg>

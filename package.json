@@ -1,0 +1,38 @@
+{
+  "name": "nogui.js",
+  "version": "1.0.0",
+  "description": "Render GTK controls from NoGui Spec",
+  "main": "src/nogui.js",
+  "bin": {
+    "md2pango": "src/nogui.js"
+  },
+  "scripts": {
+    "test": "./test.sh",
+    "reuse": "reuse addheader -y 2021 src/nogui.js -l MIT -c 'Uwe Jugel'",
+    "watch": "nodemon --exec 'npm run build'",
+    "build": "webpack"
+  },
+  "dependencies": {
+    "md2pango": "^1.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^1.11.0",
+    "webpack": "^2.2.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ubunatic/nogui.git"
+  },
+  "keywords": [
+    "gjs",
+    "gtk",
+    "gnome",
+    "gui"
+  ],
+  "author": "Uwe Jugel",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/ubunatic/nogui/issues"
+  },
+  "homepage": "https://github.com/ubunatic/nogui#readme"
+}
