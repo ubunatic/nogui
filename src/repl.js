@@ -1,6 +1,5 @@
 const gi = imports.gi
 const { GLib, Gio } = gi
-const ByteArray = imports.byteArray
 
 let history = []
 let history_index = -1
@@ -333,5 +332,4 @@ function startRepl(stream, cb=null, context=null) {
     })
 }
 
-if (!this.module) module = {}
 module.exports = { startRepl }

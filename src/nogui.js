@@ -4,8 +4,14 @@
 const { Gtk, Gdk, Gio, GLib, Clutter } = imports.gi
 const ByteArray = imports.byteArray
 
-const keys  = Object.keys
-const items = (o) => keys(o).map((k) => [k, o[k]])
+const md2pango = require('md2pango')
+
+const defaultFormatters = {
+    md: { format: (s) => md2pango.convert(s) }
+}
+
+const items = (o) => Object.keys(o).map((k) => [k, o[k]])
+const findByName = (l, s) => s == null ? null : l.find(item => item.name == s)
 const toPath = (...args) => GLib.build_filenamev(args)
 const readFile = (path) => ByteArray.toString(GLib.file_get_contents(path)[1])
 
@@ -24,7 +30,26 @@ const RESPONSE_TYPE = {
 let V = {'orientation': Gtk.Orientation.VERTICAL}
 let H = {'orientation': Gtk.Orientation.HORIZONTAL}
 
-let add = (parent, widget) => { parent.append(widget); return widget }
+let add = (parent, widget, ...styles) => {
+    addStyles(widget, ...styles)
+    parent.append(widget)
+    return widget
+}
+
+const addStyles = (w, ...styles) => {
+    const ctx = w.get_style_context()
+    styles.forEach((obj) => {
+        if(typeof obj == 'string') {
+            const cp = new Gtk.CssProvider()
+            cp.load_from_data(obj)
+            obj = cp
+        }
+        ctx.add_provider(obj, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    })
+    return w
+}
+
+const css = addStyles
 
 const gtkToNoguiResponseCode = (response_code) => {
     // see: https://gjs-docs.gnome.org/gtk40~4.0.3/gtk.responsetype
@@ -40,30 +65,17 @@ const gtkToNoguiResponseCode = (response_code) => {
     }    
 }
 
-const addStyles = (w, ...styles) => {
-    const ctx = w.get_style_context()
-    styles.forEach((obj) => {
-        if(typeof obj == 'string') {
-            const cp = new Gtk.CssProvider()
-            cp.load_from_data(obj)
-            obj = cp
-        }
-        ctx.add_provider(obj, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    })
-}
-
 var Controller = class Controller {
-    constructor({window={}, data={}, callbacks={}, dialogs={}, viewHandler=null}) {
+    constructor({window={}, data={}, callbacks={}, dialogs={}, showView=null}) {
         this.window      = window       
         this.data        = data
         this.callbacks   = callbacks
         this.dialogs     = dialogs
-        this.viewHandler = viewHandler
+        this.showView    = showView
         this.bindings    = bindAll(data)
     }
     showView(name) {
-        if (!this.viewHandler) throw new Error(`Controller.viewHandler not set`)
-        this.viewHandler(name)
+        throw new Error(`Controller.showView not set`)
     }
     callBack(name) {
         if(name in this.callbacks) return this.callbacks[name]()
@@ -86,9 +98,7 @@ var Controller = class Controller {
      */
     bindProperty(name, onChange) {
         let b = this.bindings[name]
-        if (!b) {
-            throw new Error(`missing binding ${name}`)
-        }
+        if (!b) throw new Error(`missing binding ${name}`)
         const id = b.connect(onChange)
         return {id, setter:b.setter}
     }
@@ -151,63 +161,7 @@ function bindAll(data) {
     return bindings
 }
 
-var poly = {
-    isGtk3: () => Gtk.MAJOR_VERSION < 4,
-    append: (container, o) => {
-        if (container.append) return container.append(o)
-        // No append available, must try other ways!
-        if (container instanceof Gtk.Box) {
-            return box.pack_start(o, true, false, '1.0')
-        }
-        throw new Error(`append(widget) not implemented for ${container}`)
-    },
-    runDialog: (dia, cb=null, close=true) => {
-        dia.show()
-        dia.connect('response', (o, id) => {            
-            if (cb) cb(id, gtkToNoguiResponseCode(id))
-            if (id != Gtk.ResponseType.CLOSE && close) dia.close()
-        })
-    },
-    getDisplay: () => Gdk.Display.get_default(),
-    getScreen:  () => poly.getDisplay().get_default_screen(),
-    getTheme:   () => {
-        const T = Gtk.IconTheme
-        if (T.get_for_display) return T.get_for_display(poly.getDisplay())
-        if (T.get_for_screen)  return T.get_for_screen(poly.getScreen())
-        return Gtk.IconTheme.get_default()
-    },
-    addIconPath: (path) => {
-        const theme = poly.getTheme()
-        if (theme.add_search_path)    theme.add_search_path(path)
-        if (theme.append_search_path) theme.append_search_path(path)
-    }
-}
-
-function buildIcons(icons, path) {
-    // allow finding icons by name
-    poly.addIconPath(path)
-
-    return items(icons).map(([k,spec]) => {        
-        const str = JSON.stringify(spec)
-        let img        
-        if (spec.name) {
-            img = new Gtk.Image({ icon_name: spec.name, use_fallback: true })
-        }
-        else if (spec.file) {
-            let icon_path = toPath(path, ...spec.file)
-            log(`load icon: ${str} from ${icon_path}`)
-            const gicon = Gio.FileIcon.new(Gio.File.new_for_path(icon_path))
-            img = new Gtk.Image({gicon: gicon, use_fallback: true})
-        }
-        if (img == null) {            
-            img = Gtk.Image({ icon_name: "image-missing", use_fallback: true })
-            logError(new Error(`failed to load icon ${k}: ${str}`), 'using placeholder')
-        } else {
-            log(`loaded icon ${k}: ${str}`)
-        }
-        return img
-    })
-}
+const poly = require('./poly').getPoly({Gtk, Gdk})
 
 function loadDialogFile(file, path, formatter=null) {
     if (typeof file == 'string') file = [file]
@@ -216,87 +170,9 @@ function loadDialogFile(file, path, formatter=null) {
     return text
 }
 
-function buildDialogs(dialogs, path, formatters) {
-    // const flags = Gtk.DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL;
-    return items(dialogs).map(([k,spec]) => {
-        const str = JSON.stringify(spec)
-        let fmt = (spec.fmt && formatters && formatters[spec.fmt]) || null
-        const createDialog = (window) => {
-            const w = new Gtk.Window()          
-            const dialog = new Gtk.MessageDialog({
-                // flags: Gtk.DialogFlags.DESTROY_WITH_PARENT,
-                title: spec.title,
-                text: loadDialogFile(spec.file, path, fmt),
-                buttons: [Gtk.ButtonsType.OK],
-                use_markup: true,
-                modal: false,
-                transient_for: window,
-                message_type: Gtk.MessageType.OTHER,
-            })
-            // make dialog movable by adding a title bar
-            const hdr = new Gtk.HeaderBar({ decoration_layout: 'icon:close' })
-            dialog.set_titlebar(hdr)
-            log(`loaded dialog ${k}: ${str}`)
-            return dialog
-        }
-        let run = (window) => poly.runDialog(createDialog(window))
-        log(`setup dialog ${k}: ${str}`)
-        return { spec, name:k, run:run }
-    })
-}
-
-/**
- * 
- * @param {Object} views 
- * @param {Controller} ctrl 
- * @returns {{name:string, widget:Gtk.Box}[]}
- */
-function buildViews(views, ctrl) {
-
-    return items(views).map(([k, spec]) => {
-        // TODO: add icons from "icon" property
-
-        let box = new Gtk.Box(V)
-        for (const row of spec) {
-            if      (row.title)  {
-                let l = add(box, new Gtk.Label({label:row.title}))
-                addStyles(l, 'label {padding: 5px;}')
-            }
-            else if (row.action) {
-                let b = add(box, new Gtk.Button({label:row.action}))                
-                if (row.call)   b.connect('clicked', () => ctrl.callBack(row.call))
-                if (row.dialog) b.connect('clicked', () => ctrl.openDialog(row.dialog))
-                if (row.view)   b.connect('clicked', () => ctrl.showView(row.view))
-                addStyles(b, 'button {margin: 5px;}')
-            }
-            else if (row.switch) {
-                let lane = add(box, new Gtk.Box(H))
-                let l    = add(lane, new Gtk.Label({label:row.switch}))
-                let sw   = add(lane, new Gtk.Switch())
-                if (row.call)   sw.connect('state-set', () => ctrl.callBack(row.call))
-                if (row.dialog) sw.connect('state-set', () => ctrl.openDialog(row.dialog))
-                if (row.view)   sw.connect('state-set', () => ctrl.showView(row.view))
-                if (row.bind) {
-                    let onChange = (value) => value? sw.set_state(true) : sw.set_state(false)
-                    let {id, setter} = ctrl.bindProperty(row.bind, onChange)
-                    sw.connect('state-set', (sw, state) => setter(state))
-                    sw.connect('unrealize', (sw) => ctrl.unbindProperty(row.bind, id))
-                }
-
-                // add some padding and nice alignment
-                addStyles(lane, 'box {padding: 5px;}')
-                l.set_hexpand(true)
-                l.set_halign(Gtk.Align.START)
-                sw.set_halign(Gtk.Align.END)
-            }
-        }
-        return { name:k, widget:box }
-    })
-}
-
 /** Spec defines a user interface */
 class Spec {
-    /** @param {object} spec - defines the UI as plain JS object */
+    /** @param {Object} spec - defines the UI as plain JS object */
     constructor({icons, dialogs, views, main="main", path="."}={}) {
         this.icons   = icons
         this.dialogs = dialogs
@@ -306,26 +182,207 @@ class Spec {
     }
 }
 
-/**
-
-  buildWidgets builds a GTK widget tree from the given nogui spec.
-  
-  @param {Spec}   spec        - parsed nogui object tree to be rendered
-  @param {str}    path        - path prefix used for all referenced gui resources (icons, docs, etc.)  
-  @param {object} data        - data object used to bind fields and handlers
-  @param {object} formatters  - named formatters that will be used to format text and documents
-
-*/
-function buildWidgets(spec, ctrl=null, path='.', formatters=null) {
-    log(`building widgets from ${spec} with asset path ${path}`)
-    const icons = buildIcons(spec.icons, path)
-    const dialogs = buildDialogs(spec.dialogs, path, formatters)
-    const views = buildViews(spec.views, ctrl)
-    if (ctrl != null) {
-        ctrl._add_dialogs(dialogs)
+var Builder = class Builder {
+    /**
+        Builder allows building a widget tree from a nogui spec.
+      
+        @param {Controller} controller  - controller for the UI
+        @param {Spec}       spec        - the nogui Spec
+        @param {string}     path        - path prefix used for all referenced gui resources (icons, docs, etc.)  
+        @param {Object}     formatters  - named formatters that will be used to format text and documents
+    */
+    constructor(spec, controller, path='.', formatters=defaultFormatters) {
+        this.controller = controller
+        this.spec = spec
+        this.path = path
+        this.formatters = formatters
+        this.icons = null
+        this.dialogs = null
+        this.views = null
+        this.done = false       
     }
-    return { icons, views, dialogs }
+
+    /**
+        buildWidgets builds a GTK widget tree from the given nogui spec.
+        
+        @param {Spec}   spec        - parsed nogui object tree to be rendered
+    */
+    buildWidgets() {
+        if (this.done) throw new Error('cannot build Widget tree more than once')
+        log(`building widgets from ${this.spec} with asset path ${this.path}`)
+        this.buildIcons()
+        this.buildDialogs()
+        this.buildViews()
+        if (this.controller != null) {
+            this.controller._add_dialogs(this.dialogs)
+        }
+        this.done = true
+        return this
+    }
+
+    buildIcons() {
+        const {spec, path} = this
+        // allow finding icons by name
+        poly.addIconPath(path)
+    
+        this.icons = items(spec.icons).map(([k,spec]) => {        
+            const str = JSON.stringify(spec)
+            let img
+            let opt
+            if (spec.name) {
+                opt = { icon_name: spec.name, use_fallback: true }
+                img = new Gtk.Image(opt)
+            }
+            else if (spec.file) {
+                let icon_path = toPath(path, ...spec.file)
+                log(`load icon: ${str} from ${icon_path}`)
+                const gicon = Gio.FileIcon.new(Gio.File.new_for_path(icon_path))
+                opt = {gicon: gicon, use_fallback: true}
+                img = new Gtk.Image(opt)
+            }
+            if (img == null) {
+                opt = { icon_name: "image-missing", use_fallback: true }
+                img = Gtk.Image(opt)
+                logError(new Error(`failed to load icon ${k}: ${str}`), 'using placeholder')
+            } else {
+                log(`loaded icon ${k}: ${str}`)
+            }
+            return {name:k, img, opt, spec}
+        })
+    }
+    
+    buildDialogs() {
+        const {spec, path, formatters, controller} = this
+        // const flags = Gtk.DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL;
+        this.dialogs = items(spec.dialogs).map(([k,spec]) => {
+            const str = JSON.stringify(spec)
+            let fmt = (spec.fmt && formatters && formatters[spec.fmt])
+            if (spec.file && formatters && fmt == null) {
+                fmt = formatters[spec.file.split('.').pop()] || null
+            }
+            let icon = this.findIcon(spec.icon)
+            let buttons = [Gtk.ButtonsType.OK]
+            let title = spec.info
+            if (spec.ask) {
+                title = spec.ask
+                buttons = [Gtk.ButtonsType.OK_CANCEL]
+            }
+            const createDialog = (window) => {
+                const w = new Gtk.Window()          
+                let text = null
+                if (spec.file) text = loadDialogFile(spec.file, path, fmt)
+                const dialog = new Gtk.MessageDialog({
+                    title, text, buttons,
+                    use_markup: true,
+                    modal: false,
+                    transient_for: window,
+                    message_type: Gtk.MessageType.OTHER,
+                })
+                // make dialog movable by adding a title bar
+                const hdr = new Gtk.HeaderBar({ decoration_layout: 'icon:close' })
+                if (icon) hdr.pack_start(new Gtk.Image(icon.opt))
+                dialog.set_titlebar(hdr)
+                log(`loaded dialog ${k}: ${str}`)
+                return dialog
+            }
+            let ctlFunc = controller.callbacks[spec.call]
+            let run = (window, cb=ctlFunc) => {
+                const handleResponse = (id) => {
+                    const code = gtkToNoguiResponseCode(id)
+                    print(`dialog response gtk_code=${id} nogui_code=${code}`)
+                    if (cb) return cb(id, code)                   
+                }
+                poly.runDialog(createDialog(window), handleResponse)
+            }
+            log(`setup dialog ${k}: ${str}`)
+            return { spec, name:k, run:run }
+        })
+    }
+
+    buildViews() {
+        const ctl = this.controller
+        this.views = items(this.spec.views).map(([k, spec]) => {
+            // TODO: add icons from "icon" property
+
+            let box = new Gtk.Box(V)            
+            for (const row of spec) {
+                let icon = this.findIcon(row.icon)
+                let icons = []
+                if (row.icons && row.icons.length > 0) {
+                    icons[0] = this.findIcon(row.icons[0])
+                    icons[1] = this.findIcon(row.icons[1])
+                    // icon = icon || icons[0] || icons[1]
+                }
+                if      (row.title)  {
+                    let lane = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
+                    // if (icon)  add(lane, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
+                    let l =    add(lane, new Gtk.Label({label:row.title}), 'label {margin: 5px; font-weight:bold;}')
+                    lane.set_halign(Gtk.Align.CENTER)
+                }
+                else if (row.action) {
+                    let lane = new Gtk.Box(H)
+                    if (icon)  add(lane, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
+                    let l    = add(lane, new Gtk.Label({label:row.action}))
+
+                    let b    = add(box, new Gtk.Button({child:lane}), 'button {margin: 5px;}')                    
+                    if (row.call)   b.connect('clicked', () => ctl.callBack(row.call))
+                    if (row.dialog) b.connect('clicked', () => ctl.openDialog(row.dialog))
+                    if (row.view)   b.connect('clicked', () => ctl.showView(row.view))
+
+                    lane.set_halign(Gtk.Align.CENTER)
+                    // lane.set_hexpand(false)
+                    // b.set_hexpand(false)
+                }
+                else if (row.switch) {
+                    let toggle = null
+                    let lane = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
+                    if (icon)  add(lane, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
+                    else if (icons.length > 1) {
+                        let ico1 = add(lane, new Gtk.Image(icons[0].opt), 'image {margin-right: 10px;}')
+                        let ico2 = add(lane, new Gtk.Image(icons[1].opt), 'image {margin-right: 10px;}')
+                        toggle = (state) => {                            
+                            if (state) { ico2.show(), ico1.hide() }
+                            else       { ico1.show(), ico2.hide() }
+                        }
+                        toggle(false)
+                    }
+                    let l    = add(lane, new Gtk.Label({label:row.switch}))
+                    let sw   = add(lane, new Gtk.Switch())
+                    if (row.call)   sw.connect('state-set', () => ctl.callBack(row.call))
+                    if (row.dialog) sw.connect('state-set', () => ctl.openDialog(row.dialog))
+                    if (row.view)   sw.connect('state-set', () => ctl.showView(row.view))
+                    if (row.bind) {
+                        let onChange = (value) => {
+                            value? sw.set_state(true) : sw.set_state(false)
+                            if(toggle) toggle(value)
+                        }
+                        let {id, setter} = ctl.bindProperty(row.bind, onChange)
+                        sw.connect('state-set', (sw, state) => setter(state))
+                        sw.connect('unrealize', (sw) => ctl.unbindProperty(row.bind, id))
+                    }
+
+                    // better alignment
+                    l.set_hexpand(true)
+                    l.set_halign(Gtk.Align.START)
+                    sw.set_halign(Gtk.Align.END)
+                }
+            }
+            return { name:k, widget:box }
+        })
+    }
+
+    findIcon(name)   {
+        if (name == null) return null
+        return this.icons.find(item => item.name == name)
+    }
+    findDialog(name) {
+        if (name == null) return null
+        return this.dialogs.find(item => item.name == name)        
+    }
+    findView(name)   {
+        if (name == null) return null
+        return this.views.find(item => item.name == name)
+    }
 }
 
-if (!this.module) module = {}
-module.exports = { buildWidgets, Controller, Binding, bindAll }
+module.exports = { Builder, Controller, Binding, bindAll, addStyles, RESPONSE_TYPE }
