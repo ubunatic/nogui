@@ -1,4 +1,4 @@
-# About NoGui
+# NoGui
 
 ![NoGui](nogui.svg)
 
@@ -32,8 +32,8 @@ module.exports = {
     vol_min: { name: 'audio-volume-muted-symbolic' },    
   },
   dialogs: {
-    about: { info: 'About NoGui',     file: 'about.md',  icon: 'info' },
-    close: { ask:  'Close My Audio?', call: 'respClose', icon: 'exit' },
+    about: { info: 'About Audio Player',  file: 'about.md',  icon: 'info' },
+    close: { ask:  'Close Audio Player?', call: 'respClose', icon: 'exit' },
   },
   views: {
     main: [

@@ -49,8 +49,8 @@ run_generate() {
 nodemon=node_modules/.bin/nodemon
 webpack=node_modules/.bin/webpack
 
-run_demo()    { (cd demos; gjs gtk4-player.min.js) }
-run_build()   { $webpack; run_build_demo; }
+run_demo()    { (cd demos; gjs ../dist/bin/nogui_demo.js) }
+run_build()   { run_generate; $webpack; run_build_demo; }
 run_develop() { $nodemon --exec "$0 nodemon_build"; }
 
 run_build_demo() {
