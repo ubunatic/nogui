@@ -285,7 +285,7 @@ var Builder = class Builder {
                 log(`loaded dialog ${k}: ${str}`)
                 return dialog
             }
-            let ctlFunc = controller.callbacks[spec.call]
+            let ctlFunc = () => controller.callBack(spec.call)
             let run = (window, cb=ctlFunc) => {
                 const handleResponse = (id) => {
                     const code = gtkToNoguiResponseCode(id)
