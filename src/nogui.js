@@ -77,8 +77,8 @@ var Controller = class Controller {
     showView(name) {
         throw new Error(`Controller.showView not set`)
     }
-    callBack(name) {
-        if(name in this.callbacks) return this.callbacks[name]()
+    callBack(name, ...args) {
+        if(name in this.callbacks) return this.callbacks[name](...args)
         logError(new Error(`callback '${name}' not found`))
     }
     openDialog(name)  {        
@@ -285,7 +285,10 @@ var Builder = class Builder {
                 log(`loaded dialog ${k}: ${str}`)
                 return dialog
             }
-            let ctlFunc = () => controller.callBack(spec.call)
+            let ctlFunc = null
+            if (spec.call) {
+                ctlFunc = (...args) => controller.callBack(spec.call, ...args)
+            }
             let run = (window, cb=ctlFunc) => {
                 const handleResponse = (id) => {
                     const code = gtkToNoguiResponseCode(id)
