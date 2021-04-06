@@ -12,8 +12,11 @@ const defaultFormatters = {
 
 const items = (o) => Object.keys(o).map((k) => [k, o[k]])
 const findByName = (l, s) => s == null ? null : l.find(item => item.name == s)
-const toPath = (...args) => GLib.build_filenamev(args)
-const readFile = (path) => ByteArray.toString(GLib.file_get_contents(path)[1])
+
+const toPath      = (...s) => GLib.build_filenamev(s)
+const toPathArray = (path) => (typeof path == 'string')? [path] : path
+const fileExt     = (file) => GLib.build_filenamev(toPathArray(file)).split('.').pop()
+const readFile    = (path) => ByteArray.toString(GLib.file_get_contents(path)[1])
 
 // RESPONSE_TYPE defines nogui-dialog response types.
 // The response types are more generic than `Gtk.ResponseType` codes
@@ -163,15 +166,19 @@ function bindAll(data) {
 
 const poly = require('./poly').getPoly({Gtk, Gdk})
 
-function loadDialogFile(file, path, formatter=null) {
-    if (typeof file == 'string') file = [file]
-    let text = readFile(toPath(path, ...file))
+function loadDialogFile(file, formatter=null) {
+    let text = readFile(file)
     if (formatter != null) text = formatter.format(text)
     return text
 }
 
 /** Spec defines a user interface */
 class Spec {
+    static from_path(p) {
+        let module = {} // protect the current module
+        eval(readFile(p))
+        return module.exports
+    }
     /** @param {Object} spec - defines the UI as plain JS object */
     constructor({icons, dialogs, views, main="main", path="."}={}) {
         this.icons   = icons
@@ -179,21 +186,21 @@ class Spec {
         this.views   = views
         this.main    = main
         this.path    = path
-    }
+    }    
 }
 
 var Builder = class Builder {
     /**
         Builder allows building a widget tree from a nogui spec.
-      
-        @param {Controller} controller  - controller for the UI
-        @param {Spec}       spec        - the nogui Spec
-        @param {string}     path        - path prefix used for all referenced gui resources (icons, docs, etc.)  
-        @param {Object}     formatters  - named formatters that will be used to format text and documents
+
+        @param {Controller}  controller  - controller for the UI
+        @param {Spec|string} spec        - the nogui Spec or path to the spec file
+        @param {string}      path        - path prefix used for all referenced gui resources (icons, docs, etc.)  
+        @param {Object}      formatters  - named formatters that will be used to format text and documents
     */
     constructor(spec, controller, path='.', formatters=defaultFormatters) {
         this.controller = controller
-        this.spec = spec
+        this.spec = (typeof spec == 'string')? Spec.from_path(spec) : spec
         this.path = path
         this.formatters = formatters
         this.icons = null
@@ -202,11 +209,6 @@ var Builder = class Builder {
         this.done = false       
     }
 
-    /**
-        buildWidgets builds a GTK widget tree from the given nogui spec.
-        
-        @param {Spec}   spec        - parsed nogui object tree to be rendered
-    */
     buildWidgets() {
         if (this.done) throw new Error('cannot build Widget tree more than once')
         log(`building widgets from ${this.spec} with asset path ${this.path}`)
@@ -234,7 +236,7 @@ var Builder = class Builder {
                 img = new Gtk.Image(opt)
             }
             else if (spec.file) {
-                let icon_path = toPath(path, ...spec.file)
+                let icon_path = toPath(path, ...toPathArray(spec.file))
                 log(`load icon: ${str} from ${icon_path}`)
                 const gicon = Gio.FileIcon.new(Gio.File.new_for_path(icon_path))
                 opt = {gicon: gicon, use_fallback: true}
@@ -258,7 +260,7 @@ var Builder = class Builder {
             const str = JSON.stringify(spec)
             let fmt = (spec.fmt && formatters && formatters[spec.fmt])
             if (spec.file && formatters && fmt == null) {
-                fmt = formatters[spec.file.split('.').pop()] || null
+                fmt = formatters[fileExt(spec.file)] || null
             }
             let icon = this.findIcon(spec.icon)
             let buttons = [Gtk.ButtonsType.OK]
@@ -270,7 +272,10 @@ var Builder = class Builder {
             const createDialog = (window) => {
                 const w = new Gtk.Window()          
                 let text = null
-                if (spec.file) text = loadDialogFile(spec.file, path, fmt)
+                if (spec.file) {
+                    let file = toPath(path, ...toPathArray(spec.file))
+                    text = loadDialogFile(file, fmt)
+                }
                 const dialog = new Gtk.MessageDialog({
                     title, text, buttons,
                     use_markup: true,
