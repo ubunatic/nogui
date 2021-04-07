@@ -29,8 +29,7 @@ app.connect('activate', (app) => {
     })
 
     // `nogui.Builder` builds the UI
-    let spec = require('./assets/player')  // read + load `player.js`
-    let ui = new nogui.Builder(spec, ctl, './assets')
+    let ui = new nogui.Builder('./assets/player,js', ctl, './assets')
     ui.buildWidgets()
 
     // The builder now has all `ui.views`, `ui.icons`, and `ui.dialogs`.
@@ -39,7 +38,7 @@ app.connect('activate', (app) => {
 
     // The ctl.showView handler allows switching views manually or
     // via the spec action "view":"<name>".
-    ctl.showView(spec.main)
+    ctl.showView(ui.spec.main)
     
     data.muted = true  // data bindings are set up automatically
 })

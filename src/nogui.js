@@ -5,6 +5,7 @@ const { Gtk, Gdk, Gio, GLib, Clutter } = imports.gi
 const ByteArray = imports.byteArray
 
 const md2pango = require('md2pango')
+const json5    = require('json5')
 
 const defaultFormatters = {
     md: { format: (s) => md2pango.convert(s) }
@@ -30,8 +31,9 @@ const RESPONSE_TYPE = {
     OTHER:  'OTHER',
 }
 
-let V = {'orientation': Gtk.Orientation.VERTICAL}
-let H = {'orientation': Gtk.Orientation.HORIZONTAL}
+const V = {'orientation': Gtk.Orientation.VERTICAL}
+const H = {'orientation': Gtk.Orientation.HORIZONTAL}
+const CENTER = Gtk.Align.CENTER
 
 let add = (parent, widget, ...styles) => {
     addStyles(widget, ...styles)
@@ -42,6 +44,7 @@ let add = (parent, widget, ...styles) => {
 const addStyles = (w, ...styles) => {
     const ctx = w.get_style_context()
     styles.forEach((obj) => {
+        if (obj == null) return
         if(typeof obj == 'string') {
             const cp = new Gtk.CssProvider()
             cp.load_from_data(obj)
@@ -76,6 +79,8 @@ var Controller = class Controller {
         this.dialogs     = dialogs
         this.showView    = showView
         this.bindings    = bindAll(data)
+        this.template_bindings = {}
+        this.next_template_binding_id = 0
     }
     showView(name) {
         throw new Error(`Controller.showView not set`)
@@ -88,7 +93,7 @@ var Controller = class Controller {
         if(name in this.dialogs) {
             return this.dialogs[name].run(this.window)
         }
-        logError(new Error(`dialog '${name}' not found`))    
+        logError(new Error(`dialog '${name}' not found`))
     }
     /**
     * @callback valueSetter
@@ -108,7 +113,38 @@ var Controller = class Controller {
     unbindProperty(name, id) {
         let b = this.bindings[name]
         if (b) b.disconnect(id)
-    }    
+    }
+    getBindingValue(name) {
+        return this.bindings[name].value
+    }
+    bindTemplate(tpl, onChange) {
+        let { fields, setter, getter } = Binding.parse_template(tpl)
+        if (fields == null) return null
+
+        // ensure we keep track of all bindings
+        let bindings = []
+        let binding_id = this.next_template_binding_id++
+        this.template_bindings[binding_id] = bindings
+
+        for (const name in fields) {                                
+            let { id } = this.bindProperty(name, (v) => {
+                if (setter(name, v)) onChange(getter())
+            })
+            let val = this.getBindingValue(name)
+            log(`setting default value for ${name}: ${val}`)
+            setter(name, val)
+            bindings.push({name, id})
+        }
+        onChange(getter())  // update template once to avoid weird values
+        return binding_id
+    }
+    unbindTemplate(id) {
+        let bindings = this.template_bindings[id]
+        if (bindings) for (const {name,id} of bindings) {
+            this.unbindProperty(name, id)
+        }
+        delete this.template_bindings[id]
+    }
     _add_dialogs(dialogs) {
         dialogs.forEach(d => this.dialogs[d.name] = d)
     }    
@@ -121,8 +157,8 @@ var Binding = class Binding {
         this.field   = field
         this.obj     = obj
         this.value   = obj[field]  // read default value
-        this.getter = () => obj[field]
-        this.setter = (val) => {            
+        this.getter = () => this.value
+        this.setter = (val) => {
             if (val != this.value) {
                 this.value = val
                 this.notify()
@@ -137,16 +173,74 @@ var Binding = class Binding {
         obj[field] = this.value
     }
     notify(){
+        log(`notifying ${this.field}`)
         Object.values(this.targets).forEach(t => t(this.value))
         return this
     }
     connect(onChange){
+        log(`connecting ${this.field}`)
         const id = (this.bind_id++)
         this.targets[id] = onChange
         return id
     }
     disconnect(id){
         delete this.targets[id]
+    }
+
+    /**
+     * parse_template parses a template string an returns a template array,
+     * the found template fields, and a setter for updating values.
+     * 
+     * @param {string} s  - template string with variable expressions
+     */
+    static parse_template(s) {
+        let tpl = []
+        let fields  = null
+        let pos = 0
+        while (pos < s.length) {            
+            let f = s.slice(pos).match(/\$([a-zA-Z0_9_]+)/)
+            // print('loop', s, s.length, pos, `['${tpl.join(',')}']`, f)
+            if (!f) {
+                tpl.push(s.slice(pos))            // add remainder of str to tpl and break
+                break
+            }
+            if (f.index > 0) {
+                tpl.push(s.slice(pos, pos + f.index))   // add anything before var to tpl
+            }
+            let name = f[1]                       // get field name
+            if (fields == null) fields = {}       // create fields object only if needed
+            if (!fields[name]) fields[name] = []  // setup store for indexes
+            fields[name].push(tpl.length)         // add template index for the found field
+            tpl.push(name)                        // default value is the var name
+
+            // print('added field', name)
+
+            pos = pos + f.index + f[0].length     // set remainder start pos to end of var            
+        }
+        // print('done', s, s.length, pos, `['${tpl.join(',')}']`)
+
+        let getter = null, setter = null
+        if (fields != null) {        
+            getter = () => tpl.join('')
+            /**
+             * @param {string} field - name of variable to update
+             * @param {string} val   - value to put in the template          
+             * @returns {boolean}    - true if value changed, false otherwise
+             */
+            setter = (field, val) => {
+                let changed = false
+                let indexes = fields[field]
+                if (indexes) for (const i of indexes) {
+                    if (tpl[i] != val) {
+                        tpl[i] = val
+                        print('update', field, val)
+                        changed = true
+                    }
+                }
+                return changed
+            }
+        }
+        return { fields, setter, getter }
     }
 }
 
@@ -160,7 +254,7 @@ function bindAll(data) {
     let bindings = {}
     for (const k in data) {
         if (typeof data[k] != 'function') bindings[k] = new Binding(data, k)
-    }    
+    }
     return bindings
 }
 
@@ -175,9 +269,10 @@ function loadDialogFile(file, formatter=null) {
 /** Spec defines a user interface */
 class Spec {
     static from_path(p) {
-        let module = {} // protect the current module
-        eval(readFile(p))
-        return module.exports
+        // return new Spec(eval(readFile(p)))
+        let str = readFile(p)
+        if (p.endsWith('.js')) str = str.replace(/^module\.exports = \{$/m, '{')
+        return new Spec(json5.parse(str))
     }
     /** @param {Object} spec - defines the UI as plain JS object */
     constructor({icons, dialogs, views, main="main", path="."}={}) {
@@ -186,7 +281,7 @@ class Spec {
         this.views   = views
         this.main    = main
         this.path    = path
-    }    
+    }
 }
 
 var Builder = class Builder {
@@ -195,7 +290,7 @@ var Builder = class Builder {
 
         @param {Controller}  controller  - controller for the UI
         @param {Spec|string} spec        - the nogui Spec or path to the spec file
-        @param {string}      path        - path prefix used for all referenced gui resources (icons, docs, etc.)  
+        @param {string}      path        - path prefix used for all referenced gui resources (icons, docs, etc.)
         @param {Object}      formatters  - named formatters that will be used to format text and documents
     */
     constructor(spec, controller, path='.', formatters=defaultFormatters) {
@@ -206,7 +301,7 @@ var Builder = class Builder {
         this.icons = null
         this.dialogs = null
         this.views = null
-        this.done = false       
+        this.done = false
     }
 
     buildWidgets() {
@@ -227,7 +322,7 @@ var Builder = class Builder {
         // allow finding icons by name
         poly.addIconPath(path)
     
-        this.icons = items(spec.icons).map(([k,spec]) => {        
+        this.icons = items(spec.icons).map(([k,spec]) => {
             const str = JSON.stringify(spec)
             let img
             let opt
@@ -270,7 +365,7 @@ var Builder = class Builder {
                 buttons = [Gtk.ButtonsType.OK_CANCEL]
             }
             const createDialog = (window) => {
-                const w = new Gtk.Window()          
+                const w = new Gtk.Window()
                 let text = null
                 if (spec.file) {
                     let file = toPath(path, ...toPathArray(spec.file))
@@ -307,6 +402,43 @@ var Builder = class Builder {
         })
     }
 
+    buildTable(table) {        
+        const ctl = this.controller
+        // TODO: use Grid
+        let tbox = css(new Gtk.Box(V), 'box {padding: 5px;}')
+        for (const row of table) {                        
+            let rbox = add(tbox, new Gtk.Box(H), 'box {padding: 5px;}')
+            let icon = this.findIcon(row.icon)
+            if (icon)  add(rbox, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
+            for (const text of row.row) {
+                add(rbox, this.buildText(text))
+            }
+        }
+        return tbox
+    }
+
+    buildText(text) {
+        let ctl = this.controller
+        if (text.match(/^(---+|===+|###+|___+)$/)) {
+            return new Gtk.Separator(H)
+        } else if (text == '|') {
+            return new Gtk.Separator(V)
+        } else {
+            let l = css(new Gtk.Label({label:text}), 'label {margin-left: 5px; margin-right:5px;}')
+            let bind_id = ctl.bindTemplate(text, (v) => l.set_label(v))
+            l.connect('unrealize', (l) => ctl.unbindTemplate(bind_id))
+            return l
+        }
+    }
+
+    buildLane({icon=null, text=null, style=null, center=false}={}, box_style=null) {
+        let l = css(new Gtk.Box(H), box_style? `box ${box_style}` : null)
+        if (icon)  add(l, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
+        if (text)  add(l, new Gtk.Label({label:text}), style? `label ${style}` : null)
+        if (center) l.set_halign(CENTER)
+        return l
+    }
+
     buildViews() {
         const ctl = this.controller
         this.views = items(this.spec.views).map(([k, spec]) => {
@@ -314,65 +446,112 @@ var Builder = class Builder {
 
             let box = new Gtk.Box(V)            
             for (const row of spec) {
-                let icon = this.findIcon(row.icon)
-                let icons = []
-                if (row.icons && row.icons.length > 0) {
-                    icons[0] = this.findIcon(row.icons[0])
-                    icons[1] = this.findIcon(row.icons[1])
-                    // icon = icon || icons[0] || icons[1]
+                if (typeof row == 'string') {
+                    add(box, this.buildText(row))
+                    continue
                 }
-                if      (row.title)  {
-                    let lane = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
-                    // if (icon)  add(lane, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
-                    let l =    add(lane, new Gtk.Label({label:row.title}), 'label {margin: 5px; font-weight:bold;}')
-                    lane.set_halign(Gtk.Align.CENTER)
+
+                let icon = this.findIcon(row.icon)
+                let images = []
+                let labels = []
+                let toggle = null                
+
+                if (row.icons && row.icons.length > 1) {
+                    for (const icon of row.icons) {
+                        ico = this.findIcon(icon)
+                        images.push(css(new Gtk.Image(ico1.opt), 'image {margin-right: 10px;}'))
+                    }
+                } else if (row.states && row.states.length > 1) {
+                    for (const state of row.states) {
+                        let ico = this.findIcon(state.icon)                        
+                        if (ico) images.push(css(new Gtk.Image(ico.opt), 'image {margin-right: 10px;}'))
+                        if (state.label) labels.push(state.label)
+                    }
+                }
+
+                if (images.length > 1) {
+                    toggle = (state) => {                            
+                        if (state) { images[1].show(), images[0].hide() }
+                        else       { images[0].show(), images[1].hide() }
+                    }
+                    toggle(false)
+                }
+
+                if (row.title) {                    
+                    add(box, this.buildLane({text:row.title, style:'{margin: 5px; font-weight:bold;}', center:true}))
+                }
+                else if (row.table) {
+                    add(box, this.buildTable(row.table))
                 }
                 else if (row.action) {
-                    let lane = new Gtk.Box(H)
-                    if (icon)  add(lane, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
-                    let l    = add(lane, new Gtk.Label({label:row.action}))
-
-                    let b    = add(box, new Gtk.Button({child:lane}), 'button {margin: 5px;}')                    
+                    let l = this.buildLane({text:row.action, icon, center:true}, '{padding: 5px;}')
+                    let b = add(box, new Gtk.Button({child:l}), 'button {margin: 5px;}')
                     if (row.call)   b.connect('clicked', () => ctl.callBack(row.call))
                     if (row.dialog) b.connect('clicked', () => ctl.openDialog(row.dialog))
                     if (row.view)   b.connect('clicked', () => ctl.showView(row.view))
-
-                    lane.set_halign(Gtk.Align.CENTER)
-                    // lane.set_hexpand(false)
-                    // b.set_hexpand(false)
                 }
-                else if (row.switch) {
-                    let toggle = null
-                    let lane = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
-                    if (icon)  add(lane, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
-                    else if (icons.length > 1) {
-                        let ico1 = add(lane, new Gtk.Image(icons[0].opt), 'image {margin-right: 10px;}')
-                        let ico2 = add(lane, new Gtk.Image(icons[1].opt), 'image {margin-right: 10px;}')
-                        toggle = (state) => {                            
-                            if (state) { ico2.show(), ico1.hide() }
-                            else       { ico1.show(), ico2.hide() }
-                        }
-                        toggle(false)
+                else if (row.toggle) {
+                    // build complex button content
+                    let l  = this.buildLane({icon, center:true}, '{padding: 5px;}')
+                    if (images && images.length > 1) {
+                        add(l, images[0])
+                        add(l, images[1])
+                        if(toggle) toggle(false)
                     }
-                    let l    = add(lane, new Gtk.Label({label:row.switch}))
-                    let sw   = add(lane, new Gtk.Switch())
-                    if (row.call)   sw.connect('state-set', () => ctl.callBack(row.call))
-                    if (row.dialog) sw.connect('state-set', () => ctl.openDialog(row.dialog))
-                    if (row.view)   sw.connect('state-set', () => ctl.showView(row.view))
+                    let label = add(l, new Gtk.Label())
+                    let b = add(box, new Gtk.ToggleButton({child:l}), 'button {margin: 5px;}')
+
+                    // setup label logic
+                    let is_off  = `${row.toggle} is OFF`
+                    let is_on = `${row.toggle} is ON`
+                    if (labels.length > 1){
+                        is_off = labels[0]
+                        is_on = labels[1]
+                    }
+
+                    // connect bindings and either a callback or a binding setter
+                    if (row.call) b.connect('clicked', () => ctl.callBack(row.call))
                     if (row.bind) {
                         let onChange = (value) => {
-                            value? sw.set_state(true) : sw.set_state(false)
+                            b.set_active(value? true: false)
+                            label.set_label(value? is_on : is_off)
                             if(toggle) toggle(value)
                         }
                         let {id, setter} = ctl.bindProperty(row.bind, onChange)
-                        sw.connect('state-set', (sw, state) => setter(state))
+                        if (!row.call) {
+                            b.connect('toggled', (b) => setter(b.get_active()))
+                        }
+                        b.connect('unrealize', (b) => ctl.unbindProperty(row.bind, id))
+                        onChange(ctl.getBindingValue(row.bind))
+                    }
+                }
+                else if (row.switch) {
+                    let l = add(box, this.buildLane({icon}, '{padding: 5px;}'))
+                    if (images && images.length > 1) {
+                        add(l, images[0])
+                        add(l, images[1])
+                    }
+                    let label = add(l, new Gtk.Label({label:row.switch}))                    
+                    label.set_hexpand(true)
+                    label.set_halign(Gtk.Align.START)
+
+                    let sw  = add(l, new Gtk.Switch())            
+                    sw.set_halign(Gtk.Align.END)
+
+                    // connect bindings and either a callback or a binding setter
+                    if (row.call)   sw.connect('state-set', () => ctl.callBack(row.call))
+                    if (row.bind) {
+                        let onChange = (value) => {
+                            sw.set_state(value? true : false)
+                            if(toggle) toggle(value)
+                        }
+                        let {id, setter} = ctl.bindProperty(row.bind, onChange)
+                        if (!row.call) {
+                            sw.connect('state-set', (sw, state) => setter(state))
+                        }
                         sw.connect('unrealize', (sw) => ctl.unbindProperty(row.bind, id))
                     }
 
-                    // better alignment
-                    l.set_hexpand(true)
-                    l.set_halign(Gtk.Align.START)
-                    sw.set_halign(Gtk.Align.END)
                 }
             }
             return { name:k, widget:box }
@@ -385,7 +564,7 @@ var Builder = class Builder {
     }
     findDialog(name) {
         if (name == null) return null
-        return this.dialogs.find(item => item.name == name)        
+        return this.dialogs.find(item => item.name == name)
     }
     findView(name)   {
         if (name == null) return null

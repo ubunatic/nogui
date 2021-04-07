@@ -1,6 +1,6 @@
 {
   "name": "nogui",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Render GTK controls from NoGui Spec",
   "main": "src/nogui.js",
   "bin": {
@@ -11,6 +11,7 @@
     "test": "make test"
   },
   "dependencies": {
+    "json5": "^2.2.0",
     "md2pango": "^1.0.2"
   },
   "devDependencies": {
