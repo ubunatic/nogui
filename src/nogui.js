@@ -19,12 +19,16 @@ const toPathArray = (path) => (typeof path == 'string')? [path] : path
 const fileExt     = (file) => GLib.build_filenamev(toPathArray(file)).split('.').pop()
 const readFile    = (path) => ByteArray.toString(GLib.file_get_contents(path)[1])
 
+let verbose = false
+export const setVerbose = (v) => verbose = v
+const log = (...args) => { if (verbose) window.log(...args) }
+
 // RESPONSE_TYPE defines nogui-dialog response types.
 // The response types are more generic than `Gtk.ResponseType` codes
 // and are passed additional argument to `Gtk.Dialog` callbacks.
 // Also see https://gjs-docs.gnome.org/gtk40~4.0.3/gtk.responsetype
 // and `gtkToNoguiResponseCode`.
-const RESPONSE_TYPE = {
+export const RESPONSE_TYPE = {
     HELP:   'HELP',  // HELP 
     OK:     'OK',
     NOT_OK: 'NOT_OK',
@@ -41,7 +45,7 @@ let add = (parent, widget, ...styles) => {
     return widget
 }
 
-const addStyles = (w, ...styles) => {
+export const addStyles = (w, ...styles) => {
     const ctx = w.get_style_context()
     styles.forEach((obj) => {
         if (obj == null) return
@@ -71,7 +75,7 @@ const gtkToNoguiResponseCode = (response_code) => {
     }    
 }
 
-var Controller = class Controller {
+export var Controller = class Controller {
     constructor({window={}, data={}, callbacks={}, dialogs={}, showView=null}) {
         this.window      = window       
         this.data        = data
@@ -150,7 +154,7 @@ var Controller = class Controller {
     }    
 }
 
-var Binding = class Binding {
+export var Binding = class Binding {
     constructor(obj, field) {
         this.targets = {}
         this.bind_id = 0
@@ -250,7 +254,7 @@ var Binding = class Binding {
  * @param {object} data 
  * @returns {Object.<string, Binding>}
  */
-function bindAll(data) {
+export function bindAll(data) {
     let bindings = {}
     for (const k in data) {
         if (typeof data[k] != 'function') bindings[k] = new Binding(data, k)
@@ -267,7 +271,7 @@ function loadDialogFile(file, formatter=null) {
 }
 
 /** Spec defines a user interface */
-class Spec {
+export class Spec {
     static from_path(p) {
         // return new Spec(eval(readFile(p)))
         let str = readFile(p)
@@ -284,7 +288,7 @@ class Spec {
     }
 }
 
-var Builder = class Builder {
+export var Builder = class Builder {
     /**
         Builder allows building a widget tree from a nogui spec.
 
@@ -392,7 +396,7 @@ var Builder = class Builder {
             let run = (window, cb=ctlFunc) => {
                 const handleResponse = (id) => {
                     const code = gtkToNoguiResponseCode(id)
-                    print(`dialog response gtk_code=${id} nogui_code=${code}`)
+                    log(`got dialog response gtk_code=${id} nogui_code=${code}`)
                     if (cb) return cb(id, code)                   
                 }
                 poly.runDialog(createDialog(window), handleResponse)
@@ -458,8 +462,8 @@ var Builder = class Builder {
 
                 if (row.icons && row.icons.length > 1) {
                     for (const icon of row.icons) {
-                        ico = this.findIcon(icon)
-                        images.push(css(new Gtk.Image(ico1.opt), 'image {margin-right: 10px;}'))
+                        let ico = this.findIcon(icon)
+                        images.push(css(new Gtk.Image(ico.opt), 'image {margin-right: 10px;}'))
                     }
                 } else if (row.states && row.states.length > 1) {
                     for (const state of row.states) {
@@ -571,5 +575,3 @@ var Builder = class Builder {
         return this.views.find(item => item.name == name)
     }
 }
-
-module.exports = { Builder, Controller, Binding, bindAll, addStyles, RESPONSE_TYPE }

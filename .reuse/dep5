@@ -26,3 +26,15 @@ License: CC-BY-4.0
 Files: *.svg
 Copyright: 2021 Uwe Jugel @ubunatic
 License: CC-BY-4.0
+
+Files: *.png
+Copyright: 2021 Uwe Jugel @ubunatic
+License: CC-BY-4.0
+
+Files: **/bin/*
+Copyright: 2021 Uwe Jugel @ubunatic
+License: MIT
+
+Files: Makefile
+Copyright: 2021 Uwe Jugel @ubunatic
+License: MIT

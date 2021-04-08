@@ -41,21 +41,22 @@ run_reuse() {
     reuse addheader -y 2021 src/*.js -l MIT -c 'Uwe Jugel'
 }
 
-run_generate() {
-    cat README.md | find_code 1 > demos/assets/player.js
-    cat README.md | find_code 3 > demos/gtk4-player.js
-}
-
 nodemon=node_modules/.bin/nodemon
 webpack=node_modules/.bin/webpack
+demo=examples/simple-app
+example=examples/audio-player
 
-run_demo()    { (cd demos; gjs ../dist/bin/nogui_demo.js) }
-run_build()   { run_generate; $webpack; run_build_demo; }
+run_generate() {
+    ( echo -e "// This file was generated from ../../README.md. Do not modify!\n"
+      cat README.md | find_code 1 ) > "$demo/src/app.js"
+}
+
+run_demo()    { gjs "$demo/dist/simple.app.js"; }
+run_build()   { run_generate; $webpack; run_build_example; }
 run_develop() { $nodemon --exec "$0 nodemon_build"; }
 
-run_build_demo() {
-    (echo '#!/usr/bin/env gjs'
-     cat dist/bin/nogui_demo.js) > dist/bin/nogui-demo
+run_build_example() {
+    (cd $example; npm run build; npm test)
 }
 
 run_nodemon_build(){

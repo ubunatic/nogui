@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec gjs "$(dirname "$0")/../dist/audio-player.app.js" "$@"

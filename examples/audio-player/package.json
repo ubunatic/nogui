@@ -1,0 +1,27 @@
+{
+  "name": "audio-player",
+  "version": "1.0.0",
+  "description": "NoGui Project Example",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test":       "npm run build && npm run test_help && npm run test_play",
+    "test_help":  "gjs dist/audio-player.app.js -h           2> /dev/null",
+    "test_play":  "gjs dist/audio-player.app.js -q -f a -f b 2> /dev/null",
+    "build":      "../../node_modules/.bin/webpack"
+  },
+  "keywords": [
+    "gjs",
+    "gtk",
+    "nogui",
+    "example",
+    "template",
+    "gui"
+  ],
+  "author": "Uwe Jugel",
+  "license": "MIT",
+  "dependencies": {
+    "nogui": "file:../.."
+  }
+}

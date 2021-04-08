@@ -1,22 +1,5 @@
-# NoGui
+// This file was generated from ../../README.md. Do not modify!
 
-![NoGui](nogui.svg)
-
-NoGui is a **widget-free**, **XML-free**, **boilerplate-free**
-notation for specifying user interfaces.
-
-## Rendering
-NoGui is rendering-agnostic. The UI tree should be easy to process
-and you can use any technology to draw widgets on any device.
-
-## NoGui GTK/GJS
-This project provides a first NoGui implementation for GJS/GTK.
-The [nogui](src/nogui.js) module allows for loading a NoGui spec
-and rendering the corresponding GTK widgets.
-
-## Example
-
-```js
 // First define your UI inline in one plain JS `Object`.
 // Of course, you may also load from from JSON, YAML, or another module.
 const spec = {
@@ -107,21 +90,3 @@ app.connect('activate', (app) => {
     data.muted = true  
 })
 app.run(null)
-```
-
-That is it! Here is what the app will look like.
-
-![Player Main](img/demo-main.png) ![Player Settings](img/demo-settings.png) ![Player Dialog](img/demo-dialog.png)
-
-## Packaging
-
-The example uses Node.js `require` which is not available in `gjs`.
-However, this is currently the [smartest way](https://stackoverflow.com/questions/38537256/how-can-i-include-files-with-gjs-gnome-javascript) of managing packages
-for GJS apps without having modifications of your `imports.searchPath`
-all over the place. Also for Gnome Extensions it is discouraged to modify
-the `searchPath` anyway.
-
-Using `require` and `webpack` you can generate minified files (see [webpack.config.js](webpack.config.js))
-that include all required modules. And the best is that you then can use `npm` modules.
-For instance, this project uses [md2pango](https://github.com/ubunatic/md2pango) to convert
-Markdown to Pango Markup in the about dialog.

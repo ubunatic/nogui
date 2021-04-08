@@ -32,37 +32,19 @@ let externals = {
     'gi/clutter': 'imports.gi.Clutter',
 }
 
-const src       = path(__dirname, 'src')
-const dist      = path(__dirname, 'dist')
-const demo_src  = path(__dirname, 'examples', 'simple-app', 'src')
-const demo_dist = path(__dirname, 'examples', 'simple-app', 'dist')
+const lib      = path(__dirname, 'lib')
+const dist     = path(__dirname, 'dist')
 
 module.exports = [
     {
         mode: 'production',
         optimization: { minimize: false },
         entry: {
-            nogui: path(src, 'nogui.js'),
-            repl:  path(src, 'repl.js'),
+            nogui_audio_player: path(lib, 'app.js')
         },
         output: {
-            filename: '[name].js',
+            filename: 'audio-player.app.js',
             path: dist,
-            libraryTarget: 'var',
-            library: '[name]'
-        },
-        resolve,
-        externals,
-    },
-    {
-        mode: 'production',
-        optimization: { minimize: false },
-        entry: {
-            nogui_simple_app: path(demo_src, 'app.js')
-        },
-        output: {
-            filename: 'simple.app.js',
-            path: demo_dist,
             libraryTarget: 'var',
             library: '[name]'
         },
