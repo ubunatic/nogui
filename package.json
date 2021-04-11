@@ -1,10 +1,9 @@
 {
   "name": "nogui",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Render GTK controls from NoGui Spec",
   "main": "src/nogui.js",
   "scripts": {
-    "build": "webpack",
     "test": "make test"
   },
   "dependencies": {

@@ -1,4 +1,7 @@
 .PHONY: build develop test demo reuse generate install uninstall help
+
+all: build test
+
 help:
 	# targets:
 	#

@@ -18,6 +18,14 @@ test_nogui() {
     ok   "ok msg"
 }
 
+test_demo() {
+    run_demo -h
+}
+
+test_ext() {
+    GJSEXT_USE_GTK=4 gjsext examples/audio-player/lib/extension.js
+}
+
 test_lint() {
     reuse lint ||
     fail "reuse test failed, please check (.reuse/dep5)"
@@ -26,6 +34,7 @@ test_lint() {
 
 test_all() {
     test_nogui
+    test_demo
     test_lint    
 }
 
@@ -51,21 +60,18 @@ run_generate() {
       cat README.md | find_code 1 ) > "$demo/src/app.js"
 }
 
-run_demo()    { gjs "$demo/dist/simple.app.js"; }
-run_build()   { run_generate; $webpack; run_build_example; }
-run_develop() { $nodemon --exec "$0 nodemon_build"; }
-
-run_build_example() {
-    (cd $example; npm run build; npm test)
-}
+run_webpack()       { $webpack; }
+run_demo()          { gjs "$demo/dist/simple.app.js" "$@"; }
+run_build()         { run_generate; run_webpack; run_build_example; }
+run_develop()       { $nodemon --exec "$0 nodemon_build"; }
+run_build_example() { make -C $example build test; }
+run_install()       { sudo npm install   -g .; }
+run_uninstall()     { sudo npm uninstall -g .; }
 
 run_nodemon_build(){
-    run_build    || fail 'build failed'
-    run_demo     || fail 'demo app crashed'
+    run_build || fail 'build failed'
+    run_demo  || fail 'demo app crashed'
 }
-
-run_install()   { sudo npm install   -g .; }
-run_uninstall() { sudo npm uninstall -g .; }
 
 if test $# -eq 0
 then cmd=run_test

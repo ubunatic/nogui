@@ -1,12 +1,15 @@
-const Gtk     = require('gtk4')          // webpack import for `imports.gi.Gtk`
+
+imports.gi.versions.Gtk = '4.0'
 const MyAudio = require('./myaudio.js')  // webpack import for `imports.lib.myaudio`
-const {Gio, GLib} = imports.gi           // regular import without need for webpack
+const {Gio, GLib, Gtk} = imports.gi      // regular import without need for webpack
 
 // first setup some main-file logic to locate the NoGui file and other assets
 const program   = imports.system.programInvocationName
 const args      = [program].concat(ARGV)
 const here      = GLib.path_get_dirname(program)
-const asset_dir = GLib.build_filenamev([here, '..', 'ui'])
+const asset_dir = GLib.build_filenamev([here, '..', 'share'])
+// NOTE: If you webpack this file and move it elsewhere, make sure the
+//       assets are still reachable from the webpacked location.
 
 // then define some meta data, config, create an app
 const application_id = 'com.github.ubunatic.noguiMyAudio'
@@ -41,6 +44,7 @@ app.connect('activate', (app) => {
     player.Play(songs)
     if (play_and_quit) {
         print('quit')
+        w.close()
         app.quit()
     }
 })

@@ -69,10 +69,11 @@ const callbacks = {
 }
 
 // Now we can bring everything together into a GTK app.
-const Gtk   = require('gtk4')   // webpack import for `imports.gi.Gtk`
+imports.gi.versions.Gtk = '4.0'
+const Gtk   = imports.gi.Gtk    // system import for `imports.gi.Gtk`
 const nogui = require('nogui')  // webpack import for `imports.<path>.nogui`
-
-let app = new Gtk.Application()
+const args = [imports.system.programInvocationName].concat(ARGV)
+const app = new Gtk.Application()
 app.connect('activate', (app) => {
     let window = new Gtk.ApplicationWindow({      
       title: 'Simple Audio Player', default_width: 240, application:app,
@@ -106,7 +107,7 @@ app.connect('activate', (app) => {
 
     data.muted = true  
 })
-app.run(null)
+app.run(args)
 ```
 
 That is it! Here is what the app will look like.

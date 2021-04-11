@@ -1,0 +1,10 @@
+{
+  "description": "NoGui Extension Demo",
+  "shell-version": ["40"],
+  "name": "MyAudio App",
+  "settings-schema": "org.gnome.shell.extensions.noguiAudioPlayer@ubunatic",
+  "uuid": "noguiAudioPlayer@ubunatic",
+  "url": "https://github.com/ubunatic/nogui/examples/audio-player",
+  "version": 1,
+  "license": "MIT"
+}
