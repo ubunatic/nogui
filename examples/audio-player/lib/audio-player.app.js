@@ -2401,11 +2401,11 @@ var Builder = class Builder {
                 let icon_path = toPath(path, ...toPathArray(spec.file))
                 log(`load icon: ${str} from ${icon_path}`)
                 const gicon = Gio.FileIcon.new(Gio.File.new_for_path(icon_path))
-                opt = {gicon: gicon, use_fallback: true}
+                opt = {gicon: gicon, use_fallback: true, icon_name: null}
                 img = new Gtk.Image(opt)
             }
             if (img == null) {
-                opt = { icon_name: "image-missing", use_fallback: true }
+                opt = { icon_name: "image-missing", use_fallback: true, gicon: null }
                 img = Gtk.Image(opt)
                 logError(new Error(`failed to load icon ${k}: ${str}`), 'using placeholder')
             } else {
@@ -2484,6 +2484,7 @@ var Builder = class Builder {
         return tbox
     }
 
+    // returns a Separator or templated Label based on the given template `text`
     buildText(text) {
         let ctl = this.controller
         if (text.match(/^(---+|===+|###+|___+)$/)) {
@@ -2499,11 +2500,21 @@ var Builder = class Builder {
     }
 
     buildLane({icon=null, text=null, style=null, center=false}={}, box_style=null) {
-        let l = css(new Gtk.Box(H), box_style? `box ${box_style}` : null)
-        if (icon)  add(l, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
-        if (text)  add(l, new Gtk.Label({label:text}), style? `label ${style}` : null)
-        if (center) l.set_halign(CENTER)
-        return l
+        let lane = css(new Gtk.Box(H), box_style? `box ${box_style}` : null)
+        if (icon) {
+            if (icon instanceof Gtk.Image) {
+                add(lane, icon, 'image {margin-right: 10px;}')
+            } else {
+                add(lane, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
+            }
+        }
+        if (text) {
+            style = style? `label ${style}` : null
+            if (text instanceof Gtk.Label) add(lane, text, style)
+            else                           add(lane, this.buildText(text), style)
+        }
+        if (center) lane.set_halign(CENTER)
+        return lane
     }
 
     buildViews() {
@@ -2519,8 +2530,10 @@ var Builder = class Builder {
                 }
 
                 let icon = this.findIcon(row.icon)
+                // items of repeated fields
                 let images = []
                 let labels = []
+                let binds = []
                 let toggle = null                
 
                 if (row.icons && row.icons.length > 1) {
@@ -2528,11 +2541,12 @@ var Builder = class Builder {
                         let ico = this.findIcon(icon)
                         images.push(css(new Gtk.Image(ico.opt), 'image {margin-right: 10px;}'))
                     }
-                } else if (row.states && row.states.length > 1) {
+                } else if (row.states && row.states.length > 0) {
                     for (const state of row.states) {
-                        let ico = this.findIcon(state.icon)                        
+                        let ico = this.findIcon(state.icon)
                         if (ico) images.push(css(new Gtk.Image(ico.opt), 'image {margin-right: 10px;}'))
                         if (state.label) labels.push(state.label)
+                        if (state.bind)  binds.push(state.bind)
                     }
                 }
 
@@ -2541,11 +2555,26 @@ var Builder = class Builder {
                         if (state) { images[1].show(), images[0].hide() }
                         else       { images[0].show(), images[1].hide() }
                     }
-                    toggle(false)
+                    // toggle(false)
                 }
 
                 if (row.title) {                    
                     add(box, this.buildLane({text:row.title, style:'{margin: 5px; font-weight:bold;}', center:true}))
+                }
+                else if (row.notify) {
+                    for (const i in binds) {
+                        print(`adding bind ${binds[i]}, img:${images[i]}`)
+                        const icon = images[i]
+                        const text = `$${binds[i]}`
+                        const l = add(box, this.buildLane({
+                            text, icon,
+                            style:'{margin: 5px;}', center:true
+                        }))
+                        const onChange = (v) => v? l.show(): l.hide()
+                        ctl.bindProperty(binds[i], onChange)
+                        icon.show()
+                        onChange(ctl.getBindingValue(binds[i]))
+                    }
                 }
                 else if (row.table) {
                     add(box, this.buildTable(row.table))
