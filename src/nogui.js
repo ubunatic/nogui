@@ -237,7 +237,7 @@ export var Binding = class Binding {
                 if (indexes) for (const i of indexes) {
                     if (tpl[i] != val) {
                         tpl[i] = val
-                        print('update', field, val)
+                        // print('update', field, val)
                         changed = true
                     }
                 }
@@ -413,9 +413,9 @@ export var Builder = class Builder {
         for (const row of table) {                        
             let rbox = add(tbox, new Gtk.Box(H), 'box {padding: 5px;}')
             let icon = this.findIcon(row.icon)
-            if (icon)  add(rbox, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
-            for (const text of row.row) {
-                add(rbox, this.buildText(text))
+            if (icon) add(rbox, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
+            for (const col of row.row) {
+                this.buildWidget(col, rbox)
             }
         }
         return tbox
@@ -454,141 +454,166 @@ export var Builder = class Builder {
         return lane
     }
 
+    buildAction({text=null, icon=null, call=null, dialog=null, view=null, margin: padding=2}) {
+        const ctl = this.controller
+        let l = this.buildLane({text, icon, center:true}, `{padding: ${padding}px;}`)
+        let b = css(new Gtk.Button({child:l}), `button {margin: 5px;}`)
+        if (call)   b.connect('clicked', () => ctl.callBack(call))
+        if (dialog) b.connect('clicked', () => ctl.openDialog(dialog))
+        if (view)   b.connect('clicked', () => ctl.showView(view))
+        return b
+    }
+
     buildViews() {
         const ctl = this.controller
         this.views = items(this.spec.views).map(([k, spec]) => {
-            // TODO: add icons from "icon" property
-
-            let box = new Gtk.Box(V)            
+            let box = new Gtk.Box(V)
             for (const row of spec) {
-                if (typeof row == 'string') {
-                    add(box, this.buildText(row))
-                    continue
-                }
-
-                let icon = this.findIcon(row.icon)
-                // items of repeated fields
-                let images = []
-                let labels = []
-                let binds = []
-                let toggle = null                
-
-                if (row.icons && row.icons.length > 1) {
-                    for (const icon of row.icons) {
-                        let ico = this.findIcon(icon)
-                        images.push(css(new Gtk.Image(ico.opt), 'image {margin-right: 10px;}'))
-                    }
-                } else if (row.states && row.states.length > 0) {
-                    for (const state of row.states) {
-                        let ico = this.findIcon(state.icon)
-                        if (ico) images.push(css(new Gtk.Image(ico.opt), 'image {margin-right: 10px;}'))
-                        if (state.label) labels.push(state.label)
-                        if (state.bind)  binds.push(state.bind)
-                    }
-                }
-
-                if (images.length > 1) {
-                    toggle = (state) => {                            
-                        if (state) { images[1].show(), images[0].hide() }
-                        else       { images[0].show(), images[1].hide() }
-                    }
-                    // toggle(false)
-                }
-
-                if (row.title) {                    
-                    add(box, this.buildLane({text:row.title, style:'{margin: 5px; font-weight:bold;}', center:true}))
-                }
-                else if (row.notify) {
-                    for (const i in binds) {
-                        print(`adding bind ${binds[i]}, img:${images[i]}`)
-                        const icon = images[i]
-                        const text = `$${binds[i]}`
-                        const l = add(box, this.buildLane({
-                            text, icon,
-                            style:'{margin: 5px;}', center:true
-                        }))
-                        const onChange = (v) => v? l.show(): l.hide()
-                        ctl.bindProperty(binds[i], onChange)
-                        icon.show()
-                        onChange(ctl.getBindingValue(binds[i]))
-                    }
-                }
-                else if (row.table) {
-                    add(box, this.buildTable(row.table))
-                }
-                else if (row.action) {
-                    let l = this.buildLane({text:row.action, icon, center:true}, '{padding: 5px;}')
-                    let b = add(box, new Gtk.Button({child:l}), 'button {margin: 5px;}')
-                    if (row.call)   b.connect('clicked', () => ctl.callBack(row.call))
-                    if (row.dialog) b.connect('clicked', () => ctl.openDialog(row.dialog))
-                    if (row.view)   b.connect('clicked', () => ctl.showView(row.view))
-                }
-                else if (row.toggle) {
-                    // build complex button content
-                    let l  = this.buildLane({icon, center:true}, '{padding: 5px;}')
-                    if (images && images.length > 1) {
-                        add(l, images[0])
-                        add(l, images[1])
-                        if(toggle) toggle(false)
-                    }
-                    let label = add(l, new Gtk.Label())
-                    let b = add(box, new Gtk.ToggleButton({child:l}), 'button {margin: 5px;}')
-
-                    // setup label logic
-                    let is_off  = `${row.toggle} is OFF`
-                    let is_on = `${row.toggle} is ON`
-                    if (labels.length > 1){
-                        is_off = labels[0]
-                        is_on = labels[1]
-                    }
-
-                    // connect bindings and either a callback or a binding setter
-                    if (row.call) b.connect('clicked', () => ctl.callBack(row.call))
-                    if (row.bind) {
-                        let onChange = (value) => {
-                            b.set_active(value? true: false)
-                            label.set_label(value? is_on : is_off)
-                            if(toggle) toggle(value)
-                        }
-                        let {id, setter} = ctl.bindProperty(row.bind, onChange)
-                        if (!row.call) {
-                            b.connect('toggled', (b) => setter(b.get_active()))
-                        }
-                        b.connect('unrealize', (b) => ctl.unbindProperty(row.bind, id))
-                        onChange(ctl.getBindingValue(row.bind))
-                    }
-                }
-                else if (row.switch) {
-                    let l = add(box, this.buildLane({icon}, '{padding: 5px;}'))
-                    if (images && images.length > 1) {
-                        add(l, images[0])
-                        add(l, images[1])
-                    }
-                    let label = add(l, new Gtk.Label({label:row.switch}))                    
-                    label.set_hexpand(true)
-                    label.set_halign(Gtk.Align.START)
-
-                    let sw  = add(l, new Gtk.Switch())            
-                    sw.set_halign(Gtk.Align.END)
-
-                    // connect bindings and either a callback or a binding setter
-                    if (row.call)   sw.connect('state-set', () => ctl.callBack(row.call))
-                    if (row.bind) {
-                        let onChange = (value) => {
-                            sw.set_state(value? true : false)
-                            if(toggle) toggle(value)
-                        }
-                        let {id, setter} = ctl.bindProperty(row.bind, onChange)
-                        if (!row.call) {
-                            sw.connect('state-set', (sw, state) => setter(state))
-                        }
-                        sw.connect('unrealize', (sw) => ctl.unbindProperty(row.bind, id))
-                    }
-
-                }
+                this.buildWidget(row, box)
             }
             return { name:k, widget:box }
         })
+    }
+
+    buildWidget(row, box) {
+        const ctl = this.controller
+
+        if (typeof row == 'string') {
+            add(box, this.buildText(row))
+            return
+        }
+
+        if (row instanceof Array) {
+            let lane = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
+            for (const col of row) {
+                this.buildWidget(col, lane)
+            }            
+        }
+
+        let icon = this.findIcon(row.icon)
+        // items of repeated fields
+        let images = []
+        let labels = []
+        let binds = []
+        let toggleImage = null
+        
+        let icons = row.icons? row.icons : row.control? row.control.map(o => o.icon) : []
+
+        if (icons && icons.length > 1) {
+            for (const icon of icons) {
+                let ico = this.findIcon(icon)
+                images.push(css(new Gtk.Image(ico.opt), 'image {margin-right: 10px;}'))
+            }
+        } else if (row.states && row.states.length > 0) {
+            for (const state of row.states) {
+                let ico = this.findIcon(state.icon)
+                if (ico) images.push(css(new Gtk.Image(ico.opt), 'image {margin-right: 10px;}'))
+                if (state.label) labels.push(state.label)
+                if (state.bind)  binds.push(state.bind)
+            }
+        }
+
+        if (images.length > 1) {
+            toggleImage = (state) => {                            
+                if (state) { images[1].show(), images[0].hide() }
+                else       { images[0].show(), images[1].hide() }
+            }
+        }
+
+        if (row.title) {                    
+            add(box, this.buildLane({text:row.title, style:'{margin: 5px; font-weight:bold;}', center:true}))
+        }
+        else if (row.notify) {
+            for (const i in binds) {
+                print(`adding bind ${binds[i]}, img:${images[i]}`)
+                const icon = images[i]
+                const text = `$${binds[i]}`
+                const l = add(box, this.buildLane({
+                    text, icon,
+                    style:'{margin: 5px;}', center:true
+                }))
+                const onChange = (v) => v? l.show(): l.hide()
+                ctl.bindProperty(binds[i], onChange)
+                icon.show()
+                onChange(ctl.getBindingValue(binds[i]))
+            }
+        }
+        else if (row.table) {
+            add(box, this.buildTable(row.table))
+        }
+        else if (row.action) {
+            const {call, dialog, view} = row
+            add(box, this.buildAction({text:row.action, icon, call, dialog, view, padding:5}))
+        }
+        else if (row.actions) {
+            let bar = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
+            bar.set_halign(CENTER)
+            for (const c of row.actions) {
+                this.buildWidget(c, bar)
+            }
+        }
+        else if (row.toggle) {
+            // build complex button content
+            let l  = this.buildLane({icon, center:true}, '{padding: 5px;}')
+            if (images && images.length > 1) {
+                add(l, images[0])
+                add(l, images[1])
+                if(toggleImage) toggleImage(false)
+            }
+            let label = add(l, new Gtk.Label())
+            let b = add(box, new Gtk.ToggleButton({child:l}), 'button {margin: 5px;}')
+
+            // setup label logic
+            let is_off  = `${row.toggle} is OFF`
+            let is_on = `${row.toggle} is ON`
+            if (labels.length > 1){
+                is_off = labels[0]
+                is_on = labels[1]
+            }
+
+            // connect bindings and either a callback or a binding setter
+            if (row.call) b.connect('clicked', () => ctl.callBack(row.call))
+            if (row.bind) {
+                let onChange = (value) => {
+                    b.set_active(value? true: false)
+                    label.set_label(value? is_on : is_off)
+                    if(toggleImage) toggleImage(value)
+                }
+                let {id, setter} = ctl.bindProperty(row.bind, onChange)
+                if (!row.call) {
+                    b.connect('toggled', (b) => setter(b.get_active()))
+                }
+                b.connect('unrealize', (b) => ctl.unbindProperty(row.bind, id))
+                onChange(ctl.getBindingValue(row.bind))
+            }
+        }
+        else if (row.switch) {
+            let l = add(box, this.buildLane({icon}, '{padding: 5px;}'))
+            if (images && images.length > 1) {
+                add(l, images[0])
+                add(l, images[1])
+            }
+            let label = add(l, new Gtk.Label({label:row.switch}))                    
+            label.set_hexpand(true)
+            label.set_halign(Gtk.Align.START)
+
+            let sw  = add(l, new Gtk.Switch())            
+            sw.set_halign(Gtk.Align.END)
+
+            // connect bindings and either a callback or a binding setter
+            if (row.call)   sw.connect('state-set', () => ctl.callBack(row.call))
+            if (row.bind) {
+                let onChange = (value) => {
+                    sw.set_state(value? true : false)
+                    if(toggleImage) toggleImage(value)
+                }
+                let {id, setter} = ctl.bindProperty(row.bind, onChange)
+                if (!row.call) {
+                    sw.connect('state-set', (sw, state) => setter(state))
+                }
+                sw.connect('unrealize', (sw) => ctl.unbindProperty(row.bind, id))
+            }
+        }
     }
 
     findIcon(name)   {
