@@ -1,4 +1,6 @@
-
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
 
 function getPoly({Gtk=imports.Gtk, Gdk=imports.Gdk}={}) { var poly = {
     isGtk3: () => Gtk.MAJOR_VERSION < 4,

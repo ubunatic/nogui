@@ -38,10 +38,11 @@ app.connect('activate', (app) => {
     let player = new MyAudio.Player(asset_dir, w)
     w.set_child(player.widget)
     w.show()
+    w.connect('destroy', () => app.quit())
 
     // finally start to do something with the app
-    w.connect('destroy', () => app.quit())
-    player.Play(songs)
+    if (songs.length > 0) player.songs = songs
+    player.playAudio()
     if (play_and_quit) {
         print('quit')
         w.close()

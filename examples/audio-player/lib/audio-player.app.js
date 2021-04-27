@@ -44,10 +44,11 @@ app.connect('activate', (app) => {
     let player = new MyAudio.Player(asset_dir, w)
     w.set_child(player.widget)
     w.show()
+    w.connect('destroy', () => app.quit())
 
     // finally start to do something with the app
-    w.connect('destroy', () => app.quit())
-    player.Play(songs)
+    if (songs.length > 0) player.songs = songs
+    player.playAudio()
     if (play_and_quit) {
         print('quit')
         w.close()
@@ -64,44 +65,156 @@ app.run(args)
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
 imports.gi.versions.Gtk = '4.0'   // define which GTK version we support
-const { GLib, Gtk } = imports.gi  // regular import without need for webpack
+const { GLib, Gtk, Gio } = imports.gi  // regular import without need for webpack
 
 const nogui = __webpack_require__(877)    // webpack import for `imports.<path>.nogui`
 nogui.setVerbose(true)            // show UI builder logs and more
 
-// To allow the app to do something, we need to define
-// some callbacks and a data model referenced in the NoGui spec.
-const data = {
-    muted: false,
+const { asyncTimeout } = __webpack_require__(555)  // webpack local import
+
+let song_counter = 0
+
+class Song {
+    constructor(name, playlist_number=null) {
+        if (!playlist_number) {
+            playlist_number = (song_counter += 1)
+        }     
+        this.name = name
+        this.playlist_number = playlist_number
+    }
+    get number() { return this.playlist_number }
+    toString()   { return `[${this.number}] ${this.name}` }
 }
 
-const callbacks = {
-    playAudio() { print("PLAY") },
-    stopAudio() { print("STOP") },
-    quit()      { /* noop */ },
-    respClose(id, code) { if(code == 'OK') this.quit() },
+// To allow the app to do something, we need to define a data model
+// that can also referenced in the NoGui spec.
+class Model {
+    constructor() {
+        this.muted = false
+        this.playing = false
+        this.songs = [new Song('Default Song')]
+        this.num_songs = 1
+        this.next_song = 1
+        this.song = ''
+        this.song_name = ''
+        this.progress = ''
+    }
 }
 
-class Player {
-
-    Play(songs=[]) {
-        if (songs.length == 0) print('Song list is empty')
-        for (const song of songs) {
-            print('Playing song', song)
+// Also our player needs some logic that works with the data.
+class AudioPlayer extends Model {
+    async Play(ctx) {
+        this.playing = true
+        let stop = false
+        ctx.connect(() => stop = true)
+        const play = async (num) => {
+            if (this.songs.length == 0 || stop || num > this.songs.length) {
+                // nothing to play or must stop
+                return
+            }
+            let song = this.song = this.songs[num - 1]
+            print('playing song', song)
+            // simulate playing and report progress
+            for (let i = 0; i < 1200; i++) {                
+                await asyncTimeout(() => {}, 100)
+                if (stop) return
+                if (i%10 != 0) continue
+                let s = i/10
+                this.progress = `${Math.floor(s/600)}${Math.floor(s/60)}:${Math.floor(s%60/10)}${s%10}`                
+            }
+            return true
+        }
+        try {
+            if (this.next_song > this.songs.length || this.next_song == null) {
+                // rewind playlist
+                this.next_song = 1
+            }
+            while (this.next_song <= this.songs.length) {
+                await play(this.next_song)
+                if (stop) return
+                this.next_song += 1
+            }
+            this.next_song = 1
+        } finally {
+            this.playing = false
+            this.song = ''
+            this.progress = ''
         }
     }
+}
 
+// To interact with the UI we need some handlers and add trackable UI state.
+class MyAudioController extends AudioPlayer {
+    constructor() {
+        super()
+        this.view = null
+        this.ctx = null
+        /** @type {Promise} prom - reusable Play promise to await end of playing */
+        this.prom = null
+    }
+    async playAudio() {
+        if (this.playing) return
+        if (this.ctx) this.ctx.cancel()
+        this.ctx = new Gio.Cancellable()
+        this.prom = this.Play(this.ctx)
+        try { await this.prom; print('finished playing') }
+        catch (e) { logError(e) }
+        this.prom = null
+    }
+    async nextSong() {
+        let restart = this.playing? true : false
+        if (restart) await this.stopAudio()
+        if (this.next_song < this.songs.length) this.next_song += 1
+        else                                    this.next_song = 1
+        if (restart) this.playAudio()
+    }
+    async prevSong() {
+        let restart = this.playing? true : false
+        if (restart) await this.stopAudio()
+        if (this.next_song > 1) this.next_song -= 1
+        else                    this.next_song = this.songs.length
+        if (restart) this.playAudio()
+    }
+    async stopAudio() {
+        if (this.ctx) this.ctx.cancel()
+        if (this.prom) await this.prom
+    }
+    openFile()  { 
+        const s = new Song(`Song "🎶 ${this.songs.length + 1} 🎶"`)
+        this.songs.push(s)
+        print('added song', this.songs.slice(-1))
+    }
+    forceQuit() { /* noop */ }
+    respClear(id, code) {
+        if(code == 'OK') this.songs = []
+    }
+}
+
+class Player extends MyAudioController {
     constructor(assets_dir='.', window) {
+        super()
         // A `Gtk.Stack` serves as main widget to manage views.
         let stack = this.widget = new Gtk.Stack()
 
-        callbacks.quit = () => window.close()
+        this.forceQuit = () => window.close()
 
         // `nogui.Controller` manages data and connects controls to the parents
         let ctl = this.controller = new nogui.Controller({
-            window, data, callbacks,
-            showView: (name) => stack.set_visible_child_name(name)
+            window, data:this, callbacks:this,
+            showView: (name) => {
+                stack.set_visible_child_name(name)
+                this.view = name
+            }
         })
+
+        ctl.bindProperty('songs',
+            (v)   => { this.num_songs = this.songs.length },
+            (k,v) => { this.num_songs = this.songs.length },
+        )
+        ctl.bindProperty('song',
+            (v)   => { this.song_name = this.song.name },
+            (k,v) => { this.song_name = this.song.name },
+        )
 
         // Define where to find the JSON or JS file for our UI.
         let spec_file = GLib.build_filenamev([assets_dir, 'spec.js'])
@@ -120,12 +233,34 @@ class Player {
 
         // Data bindings are set up automatically, so that we can adjust
         // values and they will be reflected in the UI
-        data.muted = true  
+        this.muted = true  
     }
 }
 
-module.exports = { data, callbacks, Player }
+module.exports = { Player }
 
+
+/***/ }),
+
+/***/ 555:
+/***/ ((module) => {
+
+const { GLib } = imports.gi
+
+/** returns a new `Promise` to be resolved or rejected with the result or error
+ *  produced by calling `func` after a `delay_ms` timeout.
+*/
+function asyncTimeout(func, delay_ms=0, ...args) {
+    return new Promise((resolve, reject) => {
+        return GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay_ms, () => {
+            try       { resolve(func(...args)) }
+            catch (e) { reject(e) }
+            return GLib.SOURCE_REMOVE
+        })
+    })
+}
+
+module.exports = { asyncTimeout }
 
 /***/ }),
 
@@ -2046,83 +2181,323 @@ if (__is_nodejs_main) {
 
 /***/ }),
 
-/***/ 877:
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+/***/ 329:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "setVerbose": () => (/* binding */ setVerbose),
-/* harmony export */   "RESPONSE_TYPE": () => (/* binding */ RESPONSE_TYPE),
-/* harmony export */   "addStyles": () => (/* binding */ addStyles),
-/* harmony export */   "Controller": () => (/* binding */ Controller),
-/* harmony export */   "Binding": () => (/* binding */ Binding),
-/* harmony export */   "bindAll": () => (/* binding */ bindAll),
-/* harmony export */   "Spec": () => (/* binding */ Spec),
-/* harmony export */   "Builder": () => (/* binding */ Builder)
-/* harmony export */ });
-// nogui transforms a non-graphical UI spec to a widget tree
-// see `assets/ui.js` to learn what features are supported.
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
 
-const { Gtk, Gdk, Gio, GLib, Clutter } = imports.gi
-const ByteArray = imports.byteArray
+/**
+ * Bindings Module
+ * @module binding
+ * 
+ * This module contains classes and functions for controlling
+ * data bindings and object proxies.
+ */
 
-const md2pango = __webpack_require__(396)
-const json5    = __webpack_require__(111)
+let GObject
+try       { GObject = imports.gi.GObject.Object }
+catch (e) { GObject = class GObject {}}
 
-const defaultFormatters = {
-    md: { format: (s) => md2pango.convert(s) }
+const logging = __webpack_require__(347)
+const { log, debug, setVerbose, obj } = new logging.Logger('binding')
+const { parseExpr, parseLiteral } = __webpack_require__(755)
+
+const _ = (obj) => Object.keys(obj).map(k => `${k}:${obj[k]}`).join(',')
+
+function proxy(obj, onChange) {
+    if (!isProxiable(obj)) return obj
+    debug('create', obj)
+    return new Proxy(obj, {
+        deleteProperty: function(obj, k) {
+            delete obj[k]
+            onChange(k, null)
+            return true
+        },
+        set: function(obj, k, v) {      
+            obj[k] = v
+            onChange(k, v)
+            return true;
+        }
+    })
 }
 
-const items = (o) => Object.keys(o).map((k) => [k, o[k]])
-const findByName = (l, s) => s == null ? null : l.find(item => item.name == s)
+function isBindable(obj) {
+    if (typeof obj == 'function') return false
+    if (obj instanceof Promise)   return false  // don't fiddle with Promises
+    if (obj instanceof GObject)   return false  // don't fiddle with GObject, only pure data objects allowed
+    return true
+}
 
-const toPath      = (...s) => GLib.build_filenamev(s)
-const toPathArray = (path) => (typeof path == 'string')? [path] : path
-const fileExt     = (file) => GLib.build_filenamev(toPathArray(file)).split('.').pop()
-const readFile    = (path) => ByteArray.toString(GLib.file_get_contents(path)[1])
+function isProxiable(obj) { return (
+    isBindable(obj)           &&
+    typeof obj == 'object'    &&  // only 'objects' can be proxied
+    obj != null
+)}
 
-let verbose = false
-const setVerbose = (v) => verbose = v
-const log = (...args) => { if (verbose) window.log(...args) }
+var Binding = class Binding {
+    constructor(obj, field) {
+        const val = obj[field]  // current value
+
+        const type = obj.constructor? obj.constructor.name : typeof obj
+        debug(`create Binding([${type}], '${field}')`)
+
+        this.targets = {}
+        this.prop_targets = {}
+        this.bind_id = 0
+        this.field   = field
+        this.obj     = obj
+        this.value   = null  // start with null
+        this.getter = () => this.value
+        this.setter = (val) => {
+            if (val != this.value) {
+                val = proxy(val, (k, v) => this.propChanged(k, v))
+                this.value = val
+                this.valueChanged(val)
+            }
+        }
+
+        Object.defineProperty(obj, field, {
+            get: this.getter,
+            set: this.setter,
+        })
+    
+        obj[field] = val
+    }
+    valueChanged(v){
+        Object.values(this.targets).forEach(t => t(v))
+        return this
+    }
+    propChanged(k, v){
+        Object.values(this.prop_targets).forEach(t => t(k, v))
+        return this
+    }
+    connect(onChange, onPropChange=null){
+        const id = (this.bind_id++)
+        this.targets[id] = onChange
+        if (onPropChange) this.prop_targets[id] = onPropChange
+        return id
+    }
+    disconnect(id){
+        delete this.targets[id]
+        delete this.prop_targets[id]
+    }
+}
+
+/**
+ * parse_template parses a template string an returns a template array,
+ * the found template fields, and a setter for updating values.
+ * 
+ * @param {string} s     - template string with variable expressions
+ * @param {string} self  - source of the template
+ * 
+ * The getter returns the complete string. The setter requires a variable name and a value
+ * to be updated. The fields are the variable names found in the template.
+ */
+function parse_template(s, self=null) {
+    let tpl = ''
+    let { expr, fields } = parseLiteral(s)
+
+    let getter = null, setter = null
+    if (fields != null) {
+        let data = {}  // copy of the watched data, used for evaluation via `expr.exec`
+
+        getter = () => tpl
+        /**
+         * @param {string} field - name of variable to update
+         * @param {string} val   - value to put in the template
+         * @returns {boolean}    - true if value changed, false otherwise
+         */
+        setter = (field, val) => {
+            // ignore updates for know values that did not change
+            if      (!(field in data))   { debug(`init tpl field: ${field}:${val}`) }
+            else if (val == data[field]) { debug(`ignore tpl field: ${field}:${val}`); return false }
+            else                         { debug(`update tpl field: ${field}:${val}`) }
+
+            if (field in data && data[field] == val) return false
+            data[field] = val                // store last know value
+            
+            let res = expr.exec(data, self)  // compute expr result
+            if (tpl != res) {
+                tpl = res
+                return true
+            }
+            return false
+        }
+    }
+    return { fields, setter, getter }
+}
+
+function parse_expr(s) {
+    const {tokens, expr} = parseExpr(s)
+    let comp = (row, data) => expr.exec(data, row)
+    let fields = expr.fields
+    // debug(`parsed ${tokens} as ${expr} with fields`, obj(expr.fields))
+    return { comp, fields }
+}
+
+/** @class base class for objects with bindable properties */
+var Bindable = class Bindable {
+    /**
+     * @param {Object<string,Binding>} bindings
+     * @param {Bindable}               parent
+     */
+    constructor(bindings={}, parent=null) {
+        /** @type {Object<string,Binding>} bindings */
+        this.bindings = bindings
+        /** @type {Object<string,Binding[]>} template_bindings */
+        this.template_bindings = {}
+        this.next_template_binding_id = 0
+        this.parent = parent
+    }
+
+    getBinding(name) {
+        // TODO: recursion check
+        if (name.startsWith('$')) return this.parent.getBinding(name.slice(1))
+        else                      return this.bindings[name]
+    }
+
+    /**
+     * @callback valueSetter
+     * @param {*} value - the changed value
+    */
+    /**
+     * @param {string} name 
+     * @param {valueSetter} onChange
+     * @returns {{id: number, setter: valueSetter}}
+    */
+    bindProperty(name, onChange, onPropChange=null) {
+        let b = this.getBinding(name)
+        if (!b) throw new Error(debug(`missing binding "${name}" in data model of`, this))
+        const id = b.connect(onChange, onPropChange)
+        return {id, setter:b.setter}
+    }
+    unbindProperty(name, id) {
+        let b = this.getBinding(name)
+        if (b) b.disconnect(id)
+    }
+    getBindingValue(name) {
+        return this.getBinding(name).value
+    }
+    bindTemplate(tpl, onChange, self=null) {
+        let { fields, setter, getter } = parse_template(tpl, self)
+        if (fields == null) return null
+        debug(`bindTemplate tpl='${tpl}', fields=${obj(fields)}`)
+
+        // ensure we keep track of all bindings        
+        let bindings = []
+        let binding_id = (this.next_template_binding_id += 1)
+        this.template_bindings[binding_id] = bindings
+
+        for (const name in fields) {                                            
+            let { id } = this.bindProperty(name, (v) => {
+                if (setter(name, v)) onChange(getter())
+            })
+            let val = this.getBindingValue(name)
+            setter(name, val)
+            bindings.push({name, id})
+        }
+        onChange(getter())  // update template once to avoid weird values
+        return binding_id
+    }
+    unbindTemplate(id) {
+        let bindings = this.template_bindings[id]
+        if (bindings) for (const {name,id} of bindings) {
+            this.unbindProperty(name, id)
+        }
+        delete this.template_bindings[id]
+    }
+}
+
+/**
+ * bindAll creates a Binding for all properties of `data` making them bindable
+ * using the returned bindings.
+ * 
+ * @param {object} data 
+ * @returns {Object.<string, Binding>}
+ */
+ function bindAll(data) {
+    let bindings = {}
+    for (const k in data) {
+        if (isBindable(data[k])) bindings[k] = new Binding(data, k)
+    }
+    return bindings
+}
+
+module.exports = { Binding, Bindable, bindAll, parse_expr, parse_template, setVerbose }
+
+
+/***/ }),
+
+/***/ 405:
+/***/ (function(module, __unused_webpack_exports, __webpack_require__) {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+const binding = __webpack_require__(329)
+
+var Controller = class Controller extends binding.Bindable {
+    constructor({window={}, data={}, callbacks={}, dialogs={}, showView=null}) {
+        super(binding.bindAll(data))
+        this.window      = window       
+        this.data        = data
+        this.callbacks   = callbacks
+        this.dialogs     = dialogs
+        this.showView    = showView
+    }
+    showView(name) {
+        throw new Error(`Controller.showView not set`)
+    }
+    callBack(name, ...args) {
+        if(name in this.callbacks) {
+            let res = this.callbacks[name](...args)
+            if (res instanceof Promise) {
+                res.catch((e) => logError(e))
+                return
+            }
+            return res            
+        }
+        logError(new Error(`callback '${name}' not found`))
+    }
+    openDialog(name)  {        
+        if(name in this.dialogs) {
+            return this.dialogs[name].run(this.window)
+        }
+        logError(new Error(`dialog '${name}' not found`))
+    }
+    _add_dialogs(dialogs) {
+        dialogs.forEach(d => this.dialogs[d.name] = d)
+    }    
+}
+
+if (!this.module) this.module = {}
+module.exports = { Controller }
+
+/***/ }),
+
+/***/ 294:
+/***/ (function(module) {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+const { Gtk } = imports.gi
 
 // RESPONSE_TYPE defines nogui-dialog response types.
 // The response types are more generic than `Gtk.ResponseType` codes
 // and are passed additional argument to `Gtk.Dialog` callbacks.
 // Also see https://gjs-docs.gnome.org/gtk40~4.0.3/gtk.responsetype
 // and `gtkToNoguiResponseCode`.
-const RESPONSE_TYPE = {
+var RESPONSE_TYPE = {
     HELP:   'HELP',  // HELP 
     OK:     'OK',
     NOT_OK: 'NOT_OK',
     OTHER:  'OTHER',
 }
-
-const V = {'orientation': Gtk.Orientation.VERTICAL}
-const H = {'orientation': Gtk.Orientation.HORIZONTAL}
-const CENTER = Gtk.Align.CENTER
-
-let add = (parent, widget, ...styles) => {
-    addStyles(widget, ...styles)
-    parent.append(widget)
-    return widget
-}
-
-const addStyles = (w, ...styles) => {
-    const ctx = w.get_style_context()
-    styles.forEach((obj) => {
-        if (obj == null) return
-        if(typeof obj == 'string') {
-            const cp = new Gtk.CssProvider()
-            cp.load_from_data(obj)
-            obj = cp
-        }
-        ctx.add_provider(obj, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    })
-    return w
-}
-
-const css = addStyles
 
 const gtkToNoguiResponseCode = (response_code) => {
     // see: https://gjs-docs.gnome.org/gtk40~4.0.3/gtk.responsetype
@@ -2138,194 +2513,647 @@ const gtkToNoguiResponseCode = (response_code) => {
     }    
 }
 
-var Controller = class Controller {
-    constructor({window={}, data={}, callbacks={}, dialogs={}, showView=null}) {
-        this.window      = window       
-        this.data        = data
-        this.callbacks   = callbacks
-        this.dialogs     = dialogs
-        this.showView    = showView
-        this.bindings    = bindAll(data)
-        this.template_bindings = {}
-        this.next_template_binding_id = 0
-    }
-    showView(name) {
-        throw new Error(`Controller.showView not set`)
-    }
-    callBack(name, ...args) {
-        if(name in this.callbacks) return this.callbacks[name](...args)
-        logError(new Error(`callback '${name}' not found`))
-    }
-    openDialog(name)  {        
-        if(name in this.dialogs) {
-            return this.dialogs[name].run(this.window)
-        }
-        logError(new Error(`dialog '${name}' not found`))
-    }
-    /**
-    * @callback valueSetter
-    * @param {*} value - the changed value
-    */
-    /**
-     * @param {string} name 
-     * @param {valueSetter} onChange
-     * @returns {{id: number, setter: valueSetter}}
-     */
-    bindProperty(name, onChange) {
-        let b = this.bindings[name]
-        if (!b) throw new Error(`missing binding ${name}`)
-        const id = b.connect(onChange)
-        return {id, setter:b.setter}
-    }
-    unbindProperty(name, id) {
-        let b = this.bindings[name]
-        if (b) b.disconnect(id)
-    }
-    getBindingValue(name) {
-        return this.bindings[name].value
-    }
-    bindTemplate(tpl, onChange) {
-        let { fields, setter, getter } = Binding.parse_template(tpl)
-        if (fields == null) return null
+if (!this.module) this.module = {}
+module.exports = { RESPONSE_TYPE, gtkToNoguiResponseCode }
 
-        // ensure we keep track of all bindings
-        let bindings = []
-        let binding_id = this.next_template_binding_id++
-        this.template_bindings[binding_id] = bindings
 
-        for (const name in fields) {                                
-            let { id } = this.bindProperty(name, (v) => {
-                if (setter(name, v)) onChange(getter())
-            })
-            let val = this.getBindingValue(name)
-            log(`setting default value for ${name}: ${val}`)
-            setter(name, val)
-            bindings.push({name, id})
-        }
-        onChange(getter())  // update template once to avoid weird values
-        return binding_id
-    }
-    unbindTemplate(id) {
-        let bindings = this.template_bindings[id]
-        if (bindings) for (const {name,id} of bindings) {
-            this.unbindProperty(name, id)
-        }
-        delete this.template_bindings[id]
-    }
-    _add_dialogs(dialogs) {
-        dialogs.forEach(d => this.dialogs[d.name] = d)
-    }    
+/***/ }),
+
+/***/ 988:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+const logging = __webpack_require__(347)
+const { log, debug } = new logging.Logger('tokens')
+
+const TOKEN = {
+    SPACE:  'SPACE',
+    VAR:    'VAR',
+    PROP:   'PROP',
+    LIT:    'LIT',
+    ADDSUB: 'ADDSUB',
+    COMP:   'COMP',
+    MULDIV: 'MULDIV',
+    UNA:    'UNA',
+    LPAR:   'LPAR',
+    RPAR:   'RPAR',
+    TERN:   'TERN',
+    COLON:  'COLON',
+    CONCAT: 'CONCAT',
+    EXPR:   'EXPR',
 }
 
-var Binding = class Binding {
-    constructor(obj, field) {
-        this.targets = {}
-        this.bind_id = 0
-        this.field   = field
-        this.obj     = obj
-        this.value   = obj[field]  // read default value
-        this.getter = () => this.value
-        this.setter = (val) => {
-            if (val != this.value) {
-                this.value = val
-                this.notify()
-            }
-        }
-        
-        Object.defineProperty(obj, field, {
-            get: this.getter,
-            set: this.setter,
-        })
-    
-        obj[field] = this.value
-    }
-    notify(){
-        log(`notifying ${this.field}`)
-        Object.values(this.targets).forEach(t => t(this.value))
-        return this
-    }
-    connect(onChange){
-        log(`connecting ${this.field}`)
-        const id = (this.bind_id++)
-        this.targets[id] = onChange
-        return id
-    }
-    disconnect(id){
-        delete this.targets[id]
-    }
+const LEXPR = {
+    SPACE:  /^\s+/,
+    VAR:    /^\$+[a-zA-Z0-9_]*|^[a-zA-Z_][a-zA-Z0-9_]*/,
+    PROP:   /^@[a-zA-Z0-9_]*/,
+    LIT:    /^'[^']*'|^"[^"]*"|^[1-9][0-9]*\.?[0-9]*(e[0-9]+)?/,
+    ADDSUB: /^[+\-]/,    
+    COMP:   /^==|\!=|[><]=?|&&|\|\|/,
+    MULDIV: /^[*/%]/,
+    UNA:    /^\!/,
+    LPAR:   /^\(/,
+    RPAR:   /^\)/,
+    TERN:   /^\?/,
+    COLON:  /^\:/,
+    CONCAT: /^\.\./,
+}
 
-    /**
-     * parse_template parses a template string an returns a template array,
-     * the found template fields, and a setter for updating values.
-     * 
-     * @param {string} s  - template string with variable expressions
-     */
-    static parse_template(s) {
-        let tpl = []
-        let fields  = null
-        let pos = 0
-        while (pos < s.length) {            
-            let f = s.slice(pos).match(/\$([a-zA-Z0_9_]+)/)
-            // print('loop', s, s.length, pos, `['${tpl.join(',')}']`, f)
-            if (!f) {
-                tpl.push(s.slice(pos))            // add remainder of str to tpl and break
-                break
-            }
-            if (f.index > 0) {
-                tpl.push(s.slice(pos, pos + f.index))   // add anything before var to tpl
-            }
-            let name = f[1]                       // get field name
-            if (fields == null) fields = {}       // create fields object only if needed
-            if (!fields[name]) fields[name] = []  // setup store for indexes
-            fields[name].push(tpl.length)         // add template index for the found field
-            tpl.push(name)                        // default value is the var name
-
-            // print('added field', name)
-
-            pos = pos + f.index + f[0].length     // set remainder start pos to end of var            
-        }
-        // print('done', s, s.length, pos, `['${tpl.join(',')}']`)
-
-        let getter = null, setter = null
-        if (fields != null) {        
-            getter = () => tpl.join('')
-            /**
-             * @param {string} field - name of variable to update
-             * @param {string} val   - value to put in the template          
-             * @returns {boolean}    - true if value changed, false otherwise
-             */
-            setter = (field, val) => {
-                let changed = false
-                let indexes = fields[field]
-                if (indexes) for (const i of indexes) {
-                    if (tpl[i] != val) {
-                        tpl[i] = val
-                        // print('update', field, val)
-                        changed = true
-                    }
-                }
-                return changed
-            }
-        }
-        return { fields, setter, getter }
-    }
+const LEXLIT = {
+    EXPR: /\{\{([^\}]*)\}\}/,
+    VAR:  /^\$+[a-zA-Z0-9_]*/,
+    LIT:  /^[^\$]+/,    
 }
 
 /**
- * bindAll creates a nogui.Binding for all properties of `data`.
- * 
- * @param {object} data 
- * @returns {Object.<string, Binding>}
+ * A token presents a single unit of syntax that can be interpreted by the parser.
+ *  @class
  */
-function bindAll(data) {
-    let bindings = {}
-    for (const k in data) {
-        if (typeof data[k] != 'function') bindings[k] = new Binding(data, k)
+ class Token {
+    /**     
+     * @param {string} name 
+     * @param {string} src
+     */
+    constructor(name, src) {
+        this.name = name
+        this.src = src
     }
-    return bindings
+    get T() { return this.name }
+    toString() {
+        if (this.name == TOKEN.SPACE) return ''
+        else                          return `${this.name}('${this.src}')`
+    }
 }
 
+function findClosing(L, R, tokens=[]) {
+    let l = 0
+    let r = 0
+    for (let i = 0; i < tokens.length; i++) {
+        if (tokens[i].name == L) l++
+        if (tokens[i].name == R) r++
+        if (l == r) return i
+        if (r > l) throw new Error(`invalid nesting for close=${r} > open=${l}`)
+    }
+}
+
+const MODE = {
+    AUTO:   'AUTO',
+    STRING: 'STRING',
+}
+
+/**
+ * @param {string} lit 
+ */
+function tokenizeLiteral(lit, mode=MODE.AUTO) {
+    const is_str = lit.match(/^['"`].*/)
+    if (mode == MODE.AUTO) {
+        if (!is_str) return [new Token(TOKEN.LIT, lit)]
+        lit = lit.slice(1,-1)
+    } else {
+        // MODE.STRING
+        // assume lit is raw string literal
+    }
+
+    log(`tokenizing string literal: ${lit}`)
+    let tokens = []
+
+    while (lit.length > 0) {
+        let m, name, src
+        for (const token_name in LEXLIT) {
+            log(`checking for token ${token_name} in ${lit}`)
+            if (m = lit.match(LEXLIT[token_name])) {
+                name = token_name
+                src = m[1] != null? m[1] : m[0]
+                break
+            }
+        }
+        if (name == null) throw new Error(`unexpected literal token at "${s20(code)}"`)
+
+        // combine strings and vars with "+", TODO: use string templates or cast to string
+        if (tokens.length > 0) tokens.push(new Token(TOKEN.CONCAT, '..'))        
+        
+        if (name == TOKEN.LIT) {
+            // wrap partial string as new full string
+            tokens.push(new Token(name, `'${src}'`))
+        }
+        else if (name == TOKEN.EXPR) {
+            tokens.push(
+                new Token(TOKEN.LPAR, '('),
+                ...tokenize(src),
+                new Token(TOKEN.RPAR, ')'),
+            )
+        }
+        else {
+            tokens.push(new Token(name, src))
+        }
+        
+        lit = lit.slice(m[0].length)
+    }
+
+    if (tokens.length > 1) tokens = [
+        new Token(TOKEN.LPAR, '('),
+        ...tokens,
+        new Token(TOKEN.RPAR, ')'),
+    ]
+
+    log(`literal tokens`, tokens)
+
+    return tokens
+}
+
+function s20(s) { return s.slice(0,20) }
+
+/**
+ * @param {string} code
+ */
+function tokenize(code) {
+    const tokens = []
+    while (code.length > 0) {
+        let m, name
+        for (const token_name in LEXPR) {
+            if (m = code.match(LEXPR[token_name])) { name = token_name; break }
+        }
+        if (name == null) throw new Error(`unexpected token at "${s20(code)}"`)
+
+        if (name == TOKEN.LIT) tokens.push(...tokenizeLiteral(m[0]))
+        else                   tokens.push(new Token(name, m[0]))
+
+        code = code.slice(m[0].length)
+    }
+    return tokens
+}
+
+module.exports = { TOKEN, LEXPR, Token, tokenize, findClosing, tokenizeLiteral, MODE }
+
+/***/ }),
+
+/***/ 524:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+/**
+ * This module implements a basic expression language used by nogui
+ * for widgets property bindings and for template bindings.
+ * @module expression
+ */
+
+const { Logger } = __webpack_require__(347)
+const logger = new Logger('expr')
+const { log, debug, error } = logger
+
+const { TOKEN, LEXPR } = __webpack_require__(988)
+
+const SymParent = Symbol('Parent')
+
+const VAR    = /^\$*/
+const PROP   = /^@/
+const NUMBER = /^[1-9][0-9]*\.?[0-9]*(e[0-9]+)?$/
+const STRING = /^("[^"]*"|'[^']*')$/
+
+const OP = {
+    VAR:    'VAR',
+    BIN:    'BIN',
+    UNA:    'UNA',
+}
+
+const PRECEDENCE = {
+    UNA:     100, // una before any
+    MULDIV:  90,  // mult before add
+    CONCAT:  85,  // concat before add
+    ADDSUB:  80,  // add before logic
+    COMP:    70,  // logic comparators before grouping
+    LPAR:    50,  // 
+    RPAR:    50,  // grouping before logic syntax
+    TERN:    20,  // logic part1
+    COLON:   20,  // logic part2
+    VAR:     0,   // variables and
+    LIT:     0,   // literals and
+    PROP:    0,   // properties have no precedence
+}
+
+function getUnaryExec(str) {
+    switch (str) {
+        case '!': return (_, rhs, data, self=null) => !rhs.exec(data, self)
+        case '-': return (_, rhs, data, self=null) => -rhs.exec(data, self)
+        case '+': return (_, rhs, data, self=null) => +rhs.exec(data, self)
+        case '(': return (_, rhs, data, self=null) =>  rhs.exec(data, self)
+    }
+    throw new Error(`invalid unary operator ${this} ${this.T}`)
+}
+
+function getBinaryExec(str) {
+    switch (str) {
+        case '==': return (lhs, rhs, data, self=null) => lhs.exec(data, self) == rhs.exec(data, self)
+        case '!=': return (lhs, rhs, data, self=null) => lhs.exec(data, self) != rhs.exec(data, self)
+        case '&&': return (lhs, rhs, data, self=null) => lhs.exec(data, self) && rhs.exec(data, self)
+        case '||': return (lhs, rhs, data, self=null) => lhs.exec(data, self) || rhs.exec(data, self)
+        case '>=': return (lhs, rhs, data, self=null) => lhs.exec(data, self) >= rhs.exec(data, self)
+        case '<=': return (lhs, rhs, data, self=null) => lhs.exec(data, self) <= rhs.exec(data, self)
+        case '>':  return (lhs, rhs, data, self=null) => lhs.exec(data, self)  > rhs.exec(data, self)
+        case '<':  return (lhs, rhs, data, self=null) => lhs.exec(data, self)  < rhs.exec(data, self)
+        case '+':  return (lhs, rhs, data, self=null) => lhs.exec(data, self)  + rhs.exec(data, self)
+        case '-':  return (lhs, rhs, data, self=null) => lhs.exec(data, self)  - rhs.exec(data, self)
+        case '*':  return (lhs, rhs, data, self=null) => lhs.exec(data, self)  * rhs.exec(data, self)
+        case '/':  return (lhs, rhs, data, self=null) => lhs.exec(data, self)  / rhs.exec(data, self)
+        case '%':  return (lhs, rhs, data, self=null) => lhs.exec(data, self)  % rhs.exec(data, self)
+        case '..': return (lhs, rhs, data, self=null) => `${lhs.exec(data, self)}${rhs.exec(data, self)}`
+        case '?':  return (lhs, rhs, data, self=null) => (
+            lhs.exec(data, self) ? rhs.lhs.exec(data, self) : rhs.rhs.exec(data, self)
+        )
+        case ':':  return (lhs, rhs, data, self=null) => { throw new Error('cannot execute rhs-only of ternary') }
+        
+    }
+    throw new Error(`invalid binary operator ${str}`)   
+}
+
+/**
+ * Base class for parse expressions
+ * @interface
+ */
+class Expr {
+    get T()               { return 'Empty' }
+    get Token()           { return '' }
+    toString()            { return 'Empty()' }
+    exec(data, self=null) { return null }
+    get fields()          { return {} }
+}
+
+/** @implements {Expr} */
+class Operator {
+    constructor(typ, text, lhs=null, rhs=null){
+        this.typ  = typ
+        this.text = text
+        this.op   = text
+        this.lhs  = lhs
+        this.rhs  = rhs
+        // "compile" the operator now!
+        switch (this.T) {
+            case OP.UNA: this.exec_fn = getUnaryExec(this.op);  break
+            case OP.BIN: this.exec_fn = getBinaryExec(this.op); break
+            default: throw new Error(`invalid operator: ${this.op}`)
+        }
+    }
+
+    get T() { return this.typ }
+
+    get Token() {
+        if (this.op.match(LEXPR.COMP))   return TOKEN.COMP
+        if (this.op.match(LEXPR.MULDIV)) return TOKEN.MULDIV
+        if (this.op.match(LEXPR.ADDSUB)) return TOKEN.ADDSUB
+        if (this.op.match(LEXPR.UNA))    return TOKEN.UNA
+        if (this.op.match(LEXPR.LPAR))   return TOKEN.LPAR
+        if (this.op.match(LEXPR.RPAR))   return TOKEN.RPAR
+        if (this.op.match(LEXPR.TERN))   return TOKEN.TERN
+        if (this.op.match(LEXPR.COLON))  return TOKEN.COLON
+        if (this.op.match(LEXPR.CONCAT)) return TOKEN.CONCAT
+    }
+
+    get Precedence() { return PRECEDENCE[this.Token] }
+
+    toString() {
+        let res = []
+        if (this.lhs) res.push(`(${this.lhs})`)
+        let op = this.op
+        if (this.T == OP.UNA) op += `¹`
+        if (this.T == OP.BIN) op += `²`
+        res.push(op)
+        if (this.rhs) res.push(`(${this.rhs})`)
+        if (this.Token == TOKEN.LPAR) res.push(')')
+        return res.join(' ')
+    }
+    exec(data, self=null) { return this.exec_fn(this.lhs, this.rhs, data, self) }
+    get fields() {
+        let res
+        if (this.lhs) res = this.lhs.fields
+        if (this.rhs) res = { ...res, ...this.rhs.fields }
+        return res
+    }
+}
+
+/** @implements {Expr} */
+class Literal {
+    constructor(text) {
+        this.text = text
+        if      (text.match(NUMBER)) this.value = Number(text)
+        else if (text.match(STRING)) this.value = text.slice(1,-1)
+        else throw new Error(`unexpected Literal value ${text}`)        
+    }
+    get T()          { return OP.VAR }
+    get Token()      { return TOKEN.LIT }
+    get Precedence() { return 0 }
+    toString()  { return `${this.value}` }
+    exec(data, self=null)  {
+        // log(`Literal.exec -> "${this.value}"`)
+        return this.value
+    }
+    get fields() { return null }
+}
+
+/** @implements {Expr} */
+class Variable {
+    constructor(text, matcher=VAR) {
+        let m = text.match(matcher)[0]
+        this.text = text
+        this.prop = m.length == 0? text : text.slice(1)  // remove first "$" if needed
+        this.name = text.slice(m.length)
+        this.depth = m.length
+        this.noname = (m.length == text.length)
+        // TODO: precompile depth traversal
+    }
+
+    get T()     { return OP.VAR }
+    get Token() { return TOKEN.VAR }
+    get Precedence() { return 0 }
+    toString() { return this.text }
+    getValue(obj) {
+        // A) allow parent access via SymParent
+        if (SymParent in obj) {
+            if      (this.depth == 2) obj = obj[SymParent]
+            else if (this.depth  > 2) for (let i = this.depth; i >= 2; i--) obj = obj[SymParent]
+            if (this.noname) return obj
+            return obj[this.name]
+        }
+        // B) access parent simply by full var name with "$" suffix
+        return obj[this.prop]
+    }
+    exec(data, self=null) { return this.getValue(data) }
+    get fields() {
+        let res = {}
+        res[this.prop] = true
+        return res
+    }
+}
+
+class Property extends Variable {
+    constructor(text) { super(text, PROP) }
+    exec(data, self) { return this.getValue(self) }
+    get fields() { return null }
+}
+
+module.exports = {
+    OP, PRECEDENCE,
+    Operator, Literal, Variable, Property, Expr,
+    SymParent, logger
+}
+
+/***/ }),
+
+/***/ 755:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+const { OP, PRECEDENCE,
+        Expr, Operator, Variable, Property, Literal,
+        SymParent, logger } = __webpack_require__(524)
+const { TOKEN, Token, findClosing, tokenize, tokenizeLiteral, MODE } = __webpack_require__(988)
+const { log, debug, error } = logger
+
+/**
+ * @param   {Token} t 
+ * @param   {Expr} lhs 
+ * @param   {Expr} rhs 
+ * @returns {Expr}
+ */
+function precedenceCombine(t, lhs, rhs) {
+    if (!lhs) throw new Error(`missing LHS for ${t}`)
+    // debug('PRECEDENCE:', t.name, rhs.Token, PRECEDENCE[t.name], rhs.Precedence)
+    if (rhs.lhs && rhs.Precedence < PRECEDENCE[t.name]) {
+        rhs.lhs = new Operator(OP.BIN, t.src, lhs, rhs.lhs) // steal LHS from lower-precedence RHS
+        return rhs                                          // return wrapping RHS as resulting OP
+    }
+    return new Operator(OP.BIN, t.src, lhs, rhs)
+}
+
+/**
+ * @param {Expr} lhs
+ * @param {Token[]} tokens
+ * @returns {Expr}
+*/
+function parse(lhs, tokens=[]) {
+    if (tokens.length == 0) return lhs
+
+    const t = tokens[0]
+    if (t.name != TOKEN.SPACE) {
+        debug(`PARSE ${t.name}, t=${t}, tokens=${tokens}`)
+    }
+
+    switch (t.name) {
+        // Spaces and Parenthesis
+        case TOKEN.SPACE:
+            return parse(lhs, tokens.slice(1))
+        case TOKEN.LPAR:
+            if (lhs) throw new Error(`unexpected LHS before ${t}`)
+            let i = findClosing(TOKEN.LPAR, TOKEN.RPAR, tokens)
+            let expr = parse(null, tokens.slice(1,i))      // parse what is inside ()
+            lhs = new Operator(OP.UNA, t.src, null, expr)  // wrap it in an UNA
+            return parse(lhs, tokens.slice(i+1))           // parse remainder
+        case TOKEN.RPAR:
+            throw new Error(`unexpected ${t}`)
+
+        // Variables and Literals
+        case TOKEN.VAR:
+            if (lhs) throw new Error(`unexpected LHS before ${t}`)
+            return parse(new Variable(t.src), tokens.slice(1))
+        case TOKEN.PROP:
+            if (lhs) throw new Error(`unexpected LHS before ${t}`)
+            return parse(new Property(t.src), tokens.slice(1))
+        case TOKEN.LIT:
+            if (lhs) throw new Error(`unexpected LHS before ${t}`)
+            return parse(new Literal(t.src), tokens.slice(1))
+
+        // Binary Operators
+        case TOKEN.TERN:   // fallthrough
+        case TOKEN.COLON:  // fallthrough
+        case TOKEN.COMP:   // fallthrough
+        case TOKEN.CONCAT: // fallthrough
+        case TOKEN.MULDIV:
+            return precedenceCombine(t, lhs, parse(null, tokens.slice(1)))
+
+        // Mixed Unary/Binary Operators
+        case TOKEN.ADDSUB:            
+            if (lhs) {
+                return precedenceCombine(t, lhs, parse(null, tokens.slice(1)))
+            }
+            // fallthrough to UNA
+        case TOKEN.UNA:
+            rhs = parse(null, tokens.slice(1))
+            if (rhs.T == OP.BIN) {
+                // embed higher-precedence UNA
+                rhs.lhs = new Operator(OP.UNA, t.src, null, rhs.lhs)
+                return rhs
+            }
+            return new Operator(OP.UNA, t.src, null, rhs)            
+    }
+    throw new Error(`unexpected token "${t}"`)
+}
+
+function parseExpr(syntax) {
+    let tokens = tokenize(syntax)    
+    let expr = parse(null, tokens)
+    return { tokens, expr, fields:expr.fields }
+}
+
+function parseLiteral(syntax) {
+    let tokens = tokenizeLiteral(syntax, MODE.STRING)
+    let expr = parse(null, tokens)
+    return { tokens, expr, fields:expr.fields }
+}
+
+module.exports = { parseExpr, parseLiteral, SymParent, logger }
+
+/***/ }),
+
+/***/ 347:
+/***/ (function(module) {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+const typeString = (obj) => obj.constructor? obj.constructor.name : typeof obj
+
+function objectString(...objects) {
+    let res = []
+    for (const obj of objects) {
+        let s = ''
+        try       { s = JSON.stringify(obj) }
+        catch (e) { s = `${obj}` }
+        try {
+            if (s.length > 40) s = s.slice(0,39) + '…'
+            res.push(`${typeString(obj)}(${s})`)
+        } catch (e) { logError(e) }
+    }
+    return res.join(', ')
+}
+
+/** defaultLogMessage show a log message `msg`
+ *  prepends optional `labels` in []-brackets and
+ *  appends a string representation of optional `objects`
+ */
+function defaultLogMessage(msg, labels=[], objects=[]) {
+    let res = []
+    if (labels  && labels.length  > 0) res.push(`[${labels.join('][')}]`)
+    res.push(msg)
+    if (objects && objects.length > 0) res.push(` ${objects.join(', ')}`)
+    return res.join(' ')
+}
+
+const ERROR = 0
+const INFO  = 1
+const DEBUG = 2
+
+const LEVEL = {
+    ERROR: ERROR,
+    INFO:  INFO,
+    DEBUG: DEBUG,
+}
+
+const self = this
+
+// setup default loggers for different systems
+// TODO: better system detection
+let _window = {}, _console = {}
+try { _window  = window  } catch (e) {}  // system is GJS 
+try { _console = console } catch (e) {}  // system is Node.js
+try { _print   = print   } catch (e) {}  // other system with "print" as fallback
+
+var Logger = class Logger {
+    /**
+     * @param {string} name     - prefix added to the log message
+     * @param {Object} global   - global `this` where you would access `log` implicitly, default value is `window`
+     */
+    constructor(name, parent=null) {
+        const info  = parent && parent.log   || _console.log   || _window.log       || _print
+        const debug = parent && parent.debug || _console.log   || _window.log       || _print
+        const error = parent && parent.error || _console.error || _window.logError  || _print
+        this.name = name
+        this.level = INFO
+
+        // public functions bound to `this` logger so they can be called without `this`
+        /** switches between INFO and DEBUG level based on boolean value `v`
+         * @param {boolean} v  - true sets DEBUG level, false sets INFO level
+         * */
+        this.setVerbose = (v=true) => this.level = v? DEBUG : INFO
+        this.setSilent  = (v=true) => this.level = v? ERROR : INFO
+        this.reset      = ()       => this.level = INFO
+        this.setLevel   = (level)  => this.level = level        
+
+        // formatters for inspecting types and objects
+        this.obj = objectString
+        this.typ = typeString
+        // setup default formatter
+        this.fmt = defaultLogMessage
+
+        // log functions (callable without `this`)
+        this.log   = (msg, ...objs) => { if (this.l >= INFO)  info(this.fmt(msg,  ['info',  this.name], objs)) }
+        this.error = (msg, ...objs) => { if (this.l >= ERROR) error(this.fmt(msg, ['error', this.name], objs)) }
+        this.debug = (msg, ...objs) => { if (this.l >= DEBUG) debug(this.fmt(msg,  ['debug', this.name], objs)) }
+    }
+
+    // shortcut for less code in log logic above
+    get l() { return this.level }
+
+    // ATTENTION: Do not add any class methods here since log methods are often used without valid `this`.
+}
+
+if (!this.module) this.module = {}
+module.exports = { Logger, typeString, objectString, LEVEL }
+
+
+/***/ }),
+
+/***/ 877:
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+// nogui transforms a non-graphical UI spec to a widget tree
+// see `assets/ui.js` to learn what features are supported.
+
+const { Gtk, Gdk, Gio } = imports.gi
+
+// setup polyfills based on Gtk version
 const poly = __webpack_require__(260).getPoly({Gtk, Gdk})
+
+// use webpack `require` for all (local) imports
+const md2pango = __webpack_require__(396)
+const json5    = __webpack_require__(111)
+const binding  = __webpack_require__(329)
+const expr     = __webpack_require__(755)
+expr.logger.setVerbose(false)
+
+const logging  = __webpack_require__(347)
+const { toPath, toPathArray, fileExt, readFile } = __webpack_require__(529)
+const { gtkToNoguiResponseCode, RESPONSE_TYPE } = __webpack_require__(294)
+const { Controller } = __webpack_require__(405)
+
+// styling shortcuts and functions
+const { CENTER, FILL, Options, add, css } = __webpack_require__(296)
+const { V, H } = Options
+
+// setup logging
+const logger = new logging.Logger('nogui')
+const { log, debug } = logger
+var setVerbose = (v=true) => { logger.setVerbose(v); binding.setVerbose(v) }
+
+// formatters for external content
+const defaultFormatters = {
+    md: { format: (s) => md2pango.convert(s) }
+}
+
+const items = (o) => Object.keys(o).map((k) => [k, o[k]])
+const typeString = logging.typeString
 
 function loadDialogFile(file, formatter=null) {
     let text = readFile(file)
@@ -2333,8 +3161,17 @@ function loadDialogFile(file, formatter=null) {
     return text
 }
 
+function ensureBindable(data, ...labels) {
+    if (data instanceof binding.Bindable) {
+        // debug(`ensureBindable[${labels.join(', ')}](${typeString(data)})`)
+    } else {
+        throw new Error(`[${labels.join(', ')}]data model is broken , expected Bindable, got ${typeString(data)}`)
+    }
+    return data
+}
+
 /** Spec defines a user interface */
-class Spec {
+var Spec = class Spec {
     static from_path(p) {
         // return new Spec(eval(readFile(p)))
         let str = readFile(p)
@@ -2342,10 +3179,11 @@ class Spec {
         return new Spec(json5.parse(str))
     }
     /** @param {Object} spec - defines the UI as plain JS object */
-    constructor({icons, dialogs, views, main="main", path="."}={}) {
+    constructor({icons={}, dialogs={}, views={}, parts={}, main="main", path="."}={}) {
         this.icons   = icons
         this.dialogs = dialogs
         this.views   = views
+        this.parts   = parts
         this.main    = main
         this.path    = path
     }
@@ -2360,9 +3198,10 @@ var Builder = class Builder {
         @param {string}      path        - path prefix used for all referenced gui resources (icons, docs, etc.)
         @param {Object}      formatters  - named formatters that will be used to format text and documents
     */
-    constructor(spec, controller, path='.', formatters=defaultFormatters) {
+    constructor(spec, controller, path='.', data=controller, formatters=defaultFormatters) {
         this.controller = controller
-        this.spec = (typeof spec == 'string')? Spec.from_path(spec) : spec
+        this.data = ensureBindable(data, 'builder')
+        this.spec = (typeof spec == 'string')? Spec.from_path(spec) : new Spec(spec)
         this.path = path
         this.formatters = formatters
         this.icons = null
@@ -2401,11 +3240,11 @@ var Builder = class Builder {
                 let icon_path = toPath(path, ...toPathArray(spec.file))
                 log(`load icon: ${str} from ${icon_path}`)
                 const gicon = Gio.FileIcon.new(Gio.File.new_for_path(icon_path))
-                opt = {gicon: gicon, use_fallback: true, icon_name: null}
+                opt = {gicon: gicon, use_fallback: true}
                 img = new Gtk.Image(opt)
             }
             if (img == null) {
-                opt = { icon_name: "image-missing", use_fallback: true, gicon: null }
+                opt = { icon_name: "image-missing", use_fallback: true}
                 img = Gtk.Image(opt)
                 logError(new Error(`failed to load icon ${k}: ${str}`), 'using placeholder')
             } else {
@@ -2469,66 +3308,134 @@ var Builder = class Builder {
         })
     }
 
-    buildTable(table) {        
-        const ctl = this.controller
+    buildTableRow(row, data=this.data) {
+        ensureBindable(data,'table','row')
+        let rbox = css(new Gtk.Box(H), 'box {padding: 0px; margin: 0px;}')
+        let icon = this.findIcon(row.icon)
+        if (icon) add(rbox, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')            
+        this.buildWidget(row, rbox, data)
+        return rbox
+    }
+
+    buildTable(table, data=this.data) {
+        ensureBindable(data,'table')
         // TODO: use Grid
         let tbox = css(new Gtk.Box(V), 'box {padding: 5px;}')
-        for (const row of table) {                        
-            let rbox = add(tbox, new Gtk.Box(H), 'box {padding: 5px;}')
-            let icon = this.findIcon(row.icon)
-            if (icon) add(rbox, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
-            for (const col of row.row) {
-                this.buildWidget(col, rbox)
+        for (const i in table.table) {
+            const row = table.table[i]
+            if (row.repeat) {                
+                let res = binding.parse_expr(row.repeat)
+                let fields = Object.keys(res.fields)
+                if (fields.length == 0) return
+                let f = fields[0]
+
+                // keep track of what is in the table
+                let widgets = []
+                const onChange = (items) => {
+                    print(`recreate ${items.length} items`)
+                    for (const w of widgets) tbox.remove(w)
+                    widgets = []
+                    for (const item of items) {
+                        let b = new binding.Bindable(binding.bindAll(item), data)
+                        ensureBindable(b,'change','item')
+                        let w = add(tbox, this.buildTableRow(row, b))
+                        widgets.push(w)
+                    }
+                }
+                const onPropChange = (k, v) => {
+                    // todo sync UI list with data list (change only the changed!)
+                    if (k == 'length') return  // ignore length changes
+                    if (v == null) print(`item deleted i=${k} (${typeof k})`)
+                    else           print(`item changed i=${k} (${typeof k}), v=${v} (${typeof k})`)
+
+                    // HACK: for now just recreate all rows
+                    onChange(data.getBindingValue(f))
+                }
+                data.bindProperty(f, onChange, onPropChange)
+                continue
             }
+            add(tbox, this.buildTableRow(row, data))
         }
         return tbox
     }
 
     // returns a Separator or templated Label based on the given template `text`
-    buildText(text) {
-        let ctl = this.controller
+    buildText(text, data=this.data, self=null) {
+        ensureBindable(data,'text')
         if (text.match(/^(---+|===+|###+|___+)$/)) {
             return new Gtk.Separator(H)
         } else if (text == '|') {
             return new Gtk.Separator(V)
         } else {
             let l = css(new Gtk.Label({label:text}), 'label {margin-left: 5px; margin-right:5px;}')
-            let bind_id = ctl.bindTemplate(text, (v) => l.set_label(v))
-            l.connect('unrealize', (l) => ctl.unbindTemplate(bind_id))
+            let bind_id = data.bindTemplate(text, (v) => {
+                // print(`tpl updated ${text}: ${v}`)
+                l.set_label(v)
+            }, self)
+            if (bind_id != null) {
+                l.connect('unrealize', (l) => {
+                    // print(`unbinding ${text} ${bind_id}`)
+                    data.unbindTemplate(bind_id)
+                })
+            }
             return l
         }
     }
 
-    buildLane({icon=null, text=null, style=null, center=false}={}, box_style=null) {
+    buildLane({icon=null, text=null, style=null, center=false, fill=false, data=this.data}={}, box_style=null) {
+        ensureBindable(data,'lane')
         let lane = css(new Gtk.Box(H), box_style? `box ${box_style}` : null)
+        let icon_style = ''
+        if (text) icon_style = 'image {margin-right: 10px;}'
         if (icon) {
             if (icon instanceof Gtk.Image) {
-                add(lane, icon, 'image {margin-right: 10px;}')
+                add(lane, icon, icon_style)
             } else {
-                add(lane, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
+                add(lane, new Gtk.Image(icon.opt), icon_style)
             }
         }
         if (text) {
             style = style? `label ${style}` : null
-            if (text instanceof Gtk.Label) add(lane, text, style)
-            else                           add(lane, this.buildText(text), style)
+            if (!(text instanceof Gtk.Label)) text = this.buildText(text, data)
+            add(lane, text, style)
+            if (fill) text.set_hexpand(true)
         }
-        if (center) lane.set_halign(CENTER)
+        if (center) lane.set_halign(CENTER)        
         return lane
     }
 
-    buildAction({text=null, icon=null, call=null, dialog=null, view=null, margin: padding=2}) {
+    buildAction({text=null, tooltip=null, icon=null, call=null, dialog=null, view=null, margin: padding=2, data=this.data}) {
+        ensureBindable(data,'action')
         const ctl = this.controller
-        let l = this.buildLane({text, icon, center:true}, `{padding: ${padding}px;}`)
-        let b = css(new Gtk.Button({child:l}), `button {margin: 5px;}`)
+        let l = this.buildLane({text, icon, center:true, data}, `{padding: ${padding}px;}`)
+        let b = css(new Gtk.Button({child:l, tooltip_text: tooltip}), `button {margin: 5px;}`)
+        b.set_tool
         if (call)   b.connect('clicked', () => ctl.callBack(call))
         if (dialog) b.connect('clicked', () => ctl.openDialog(dialog))
         if (view)   b.connect('clicked', () => ctl.showView(view))
         return b
     }
 
+    buildVis(row, w, expr, data=this.data){
+        ensureBindable(data,'vis')
+        const {comp, fields} = binding.parse_expr(expr)
+        const update = () => {
+            // print(`vis update`, JSON.stringify(data), JSON.stringify(fields), w, JSON.stringify(row))
+            if (comp(row, fields)) w.show()
+            else                   w.hide()
+        }
+
+        // log(`setting up vis binding for ${expr}`)
+
+        for (const f in fields) {
+            const { id } = data.bindProperty(f, (v) => { fields[f] = v; update() })
+            w.connect('unrealize', (w) => data.unbindProperty(f, id))
+            fields[f] = data.getBindingValue(f)
+        }
+        update()
+    }
+
     buildViews() {
-        const ctl = this.controller
         this.views = items(this.spec.views).map(([k, spec]) => {
             let box = new Gtk.Box(V)
             for (const row of spec) {
@@ -2538,19 +3445,26 @@ var Builder = class Builder {
         })
     }
 
-    buildWidget(row, box) {
+    buildWidget(row, box, data=this.data) {
+        ensureBindable(data,'widget')
         const ctl = this.controller
 
         if (typeof row == 'string') {
-            add(box, this.buildText(row))
+            add(box, this.buildText(row, data))
             return
         }
 
         if (row instanceof Array) {
-            let lane = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
+            let lane = add(box, new Gtk.Box(H), 'box {padding: 0px; margin:0px;}')
             for (const col of row) {
-                this.buildWidget(col, lane)
-            }            
+                this.buildWidget(col, lane, data)
+            }
+            return
+        }
+
+        if (row.use && row.use in this.spec.parts) {
+            this.buildWidget(this.spec.parts[row.use], box, data)
+            return
         }
 
         let icon = this.findIcon(row.icon)
@@ -2583,8 +3497,29 @@ var Builder = class Builder {
             }
         }
 
-        if (row.title) {                    
-            add(box, this.buildLane({text:row.title, style:'{margin: 5px; font-weight:bold;}', center:true}))
+        let w = null
+        let fill = row.center || row.fill || row.title? true: false
+
+        if (row.title) {
+            let style = '{margin: 5px; font-weight:bold;}'
+            w = add(box, this.buildLane({text:row.title, style, fill, data}))
+        }
+        else if (row.text) {
+            let style = '{margin: 5px;}'
+            w = add(box, this.buildLane({text:row.text, style, fill, data}))
+        }
+        else if (row.row) {
+            for (const col of row.row) this.buildWidget(col, box, data)
+        }
+        else if (row.hfill && typeof row.hfill == 'number') {
+            let margin = 15 * row.hfill
+            let style = `label {margin-left: ${margin}px; margin-right: ${margin}px;}`
+            w = add(box, new Gtk.Label({label: ''}, style))
+        }
+        else if (row.vfill && typeof row.vfill == 'number') {
+            let margin = 15 * row.vfill
+            let style = `label {margin-top: ${margin}px; margin-bottom: ${margin}px;}`
+            w = add(box, new Gtk.Label({label: ''}, style))
         }
         else if (row.notify) {
             for (const i in binds) {
@@ -2592,32 +3527,37 @@ var Builder = class Builder {
                 const icon = images[i]
                 const text = `$${binds[i]}`
                 const l = add(box, this.buildLane({
-                    text, icon,
+                    text, icon, data,
                     style:'{margin: 5px;}', center:true
                 }))
                 const onChange = (v) => v? l.show(): l.hide()
-                ctl.bindProperty(binds[i], onChange)
+                data.bindProperty(binds[i], onChange)
                 icon.show()
-                onChange(ctl.getBindingValue(binds[i]))
+                onChange(data.getBindingValue(binds[i]))
             }
         }
         else if (row.table) {
-            add(box, this.buildTable(row.table))
+            w = add(box, this.buildTable(row, data))
         }
-        else if (row.action) {
+        else if (row.act != null || row.action != null) {
             const {call, dialog, view} = row
-            add(box, this.buildAction({text:row.action, icon, call, dialog, view, padding:5}))
+            const text = row.label || row.action
+            w = add(box, this.buildAction({
+                text, icon, call, dialog, view, data,
+                tooltip: row.act,
+                padding: 5,
+            }))
         }
         else if (row.actions) {
-            let bar = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
+            let bar = w = add(box, new Gtk.Box(H), 'box {padding: 5px;}')
             bar.set_halign(CENTER)
             for (const c of row.actions) {
-                this.buildWidget(c, bar)
+                this.buildWidget(c, bar, data)
             }
         }
         else if (row.toggle) {
             // build complex button content
-            let l  = this.buildLane({icon, center:true}, '{padding: 5px;}')
+            let l = w = this.buildLane({icon, center:true, data}, '{padding: 5px;}')
             if (images && images.length > 1) {
                 add(l, images[0])
                 add(l, images[1])
@@ -2636,27 +3576,29 @@ var Builder = class Builder {
 
             // connect bindings and either a callback or a binding setter
             if (row.call) b.connect('clicked', () => ctl.callBack(row.call))
+            if (row.view) b.connect('clicked', () => ctl.showView(row.view))
             if (row.bind) {
                 let onChange = (value) => {
                     b.set_active(value? true: false)
                     label.set_label(value? is_on : is_off)
                     if(toggleImage) toggleImage(value)
                 }
-                let {id, setter} = ctl.bindProperty(row.bind, onChange)
+                let {id, setter} = data.bindProperty(row.bind, onChange)
                 if (!row.call) {
                     b.connect('toggled', (b) => setter(b.get_active()))
                 }
-                b.connect('unrealize', (b) => ctl.unbindProperty(row.bind, id))
-                onChange(ctl.getBindingValue(row.bind))
+                b.connect('unrealize', (b) => data.unbindProperty(row.bind, id))
+                onChange(data.getBindingValue(row.bind))
             }
         }
         else if (row.switch) {
-            let l = add(box, this.buildLane({icon}, '{padding: 5px;}'))
+            let box_style = '{padding: 5px; padding-left: 10px; padding-right: 10px;}'
+            let l = w = add(box, this.buildLane({icon, data}, box_style))
             if (images && images.length > 1) {
                 add(l, images[0])
                 add(l, images[1])
             }
-            let label = add(l, new Gtk.Label({label:row.switch}))                    
+            let label = add(l, this.buildText(row.switch, data, row), 'label {margin-left: 10px;}')
             label.set_hexpand(true)
             label.set_halign(Gtk.Align.START)
 
@@ -2664,18 +3606,24 @@ var Builder = class Builder {
             sw.set_halign(Gtk.Align.END)
 
             // connect bindings and either a callback or a binding setter
-            if (row.call)   sw.connect('state-set', () => ctl.callBack(row.call))
+            if (row.call) sw.connect('state-set', () => ctl.callBack(row.call))
             if (row.bind) {
                 let onChange = (value) => {
+                    // label.set_label()
                     sw.set_state(value? true : false)
                     if(toggleImage) toggleImage(value)
                 }
-                let {id, setter} = ctl.bindProperty(row.bind, onChange)
+                let {id, setter} = data.bindProperty(row.bind, onChange)
                 if (!row.call) {
                     sw.connect('state-set', (sw, state) => setter(state))
                 }
-                sw.connect('unrealize', (sw) => ctl.unbindProperty(row.bind, id))
+                sw.connect('unrealize', (sw) => data.unbindProperty(row.bind, id))
+                onChange(data.getBindingValue(row.bind))
             }
+        }
+
+        if (w && row.vis) {
+            this.buildVis(row, w, row.vis, data)
         }
     }
 
@@ -2693,13 +3641,18 @@ var Builder = class Builder {
     }
 }
 
+module.exports = {
+    Spec, Builder, Controller, setVerbose, RESPONSE_TYPE
+}
 
 /***/ }),
 
 /***/ 260:
 /***/ ((module) => {
 
-
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
 
 function getPoly({Gtk=imports.Gtk, Gdk=imports.Gdk}={}) { var poly = {
     isGtk3: () => Gtk.MAJOR_VERSION < 4,
@@ -2735,6 +3688,71 @@ function getPoly({Gtk=imports.Gtk, Gdk=imports.Gdk}={}) { var poly = {
 
 module.exports = { getPoly }
 
+
+/***/ }),
+
+/***/ 296:
+/***/ (function(module) {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+const { Gtk } = imports.gi
+
+const Options = {
+    V: {orientation: Gtk.Orientation.VERTICAL},
+    H: {orientation: Gtk.Orientation.HORIZONTAL},
+}
+
+const Constants = {
+    CENTER: Gtk.Align.CENTER,
+    FILL:   Gtk.Align.FILL,
+}
+
+let add = (parent, widget, ...styles) => {
+    css(widget, ...styles)
+    parent.append(widget)
+    return widget
+}
+
+var css = (w, ...styles) => {
+    const ctx = w.get_style_context()
+    styles.forEach((obj) => {
+        if (obj == null) return
+        if(typeof obj == 'string') {
+            const cp = new Gtk.CssProvider()
+            cp.load_from_data(obj)
+            obj = cp
+        }
+        ctx.add_provider(obj, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    })
+    return w
+}
+
+if (!this.module) this.module = {}
+module.exports = { add, css, Options, ...Constants }
+
+
+/***/ }),
+
+/***/ 529:
+/***/ (function(module) {
+
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
+const { GLib, } = imports.gi
+const ByteArray = imports.byteArray
+
+const toPath      = (...s) => GLib.build_filenamev(s)
+const toPathArray = (path) => (typeof path == 'string')? [path] : path
+const fileExt     = (file) => GLib.build_filenamev(toPathArray(file)).split('.').pop()
+const readFile    = (path) => ByteArray.toString(GLib.file_get_contents(path)[1])
+
+if (!this.module) this.module = {}
+module.exports = { toPath, toPathArray, fileExt, readFile }
 
 /***/ }),
 
@@ -2778,34 +3796,6 @@ module.exports = { getPoly }
 /******/ 	__webpack_require__.c = __webpack_module_cache__;
 /******/ 	
 /************************************************************************/
-/******/ 	/* webpack/runtime/define property getters */
-/******/ 	(() => {
-/******/ 		// define getter functions for harmony exports
-/******/ 		__webpack_require__.d = (exports, definition) => {
-/******/ 			for(var key in definition) {
-/******/ 				if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
-/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
-/******/ 				}
-/******/ 			}
-/******/ 		};
-/******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
-/******/ 	(() => {
-/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
-/******/ 	})();
-/******/ 	
-/******/ 	/* webpack/runtime/make namespace object */
-/******/ 	(() => {
-/******/ 		// define __esModule on exports
-/******/ 		__webpack_require__.r = (exports) => {
-/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
-/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
-/******/ 			}
-/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
-/******/ 		};
-/******/ 	})();
-/******/ 	
 /******/ 	/* webpack/runtime/node module decorator */
 /******/ 	(() => {
 /******/ 		__webpack_require__.nmd = (module) => {

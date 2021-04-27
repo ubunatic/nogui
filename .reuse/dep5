@@ -38,3 +38,7 @@ License: MIT
 Files: Makefile
 Copyright: 2021 Uwe Jugel @ubunatic
 License: MIT
+
+Files: examples/audio-player/Makefile
+Copyright: 2021 Uwe Jugel @ubunatic
+License: MIT

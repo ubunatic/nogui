@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2021 Uwe Jugel
+//
+// SPDX-License-Identifier: MIT
+
 const gi = imports.gi
 const { GLib, Gio } = gi
 

@@ -18,12 +18,12 @@ and rendering the corresponding GTK widgets.
 
 ```js
 // First define your UI inline in one plain JS `Object`.
-// Of course, you may also load from from JSON, YAML, or another module.
+// You can also load the `spec` from JSON, YAML, or another module.
 const spec = {
-  icons: {
-    card: { name: 'audio-card' },
-    play: { name: 'media-playback-start' },
-    stop: { name: 'media-playback-stop' },
+  icons: {                                                                // define all icons used by the app
+    card: { name: 'audio-card' },                                         // this example uses the standard
+    play: { name: 'media-playback-start' },                               // GTK icons by name and
+    stop: { name: 'media-playback-stop' }, 
     exit: { name: 'application-exit-symbolic' },
     info: { name: "dialog-information-symbolic" },
     gears: { name: "settings-gears-symbolic" },
@@ -31,41 +31,51 @@ const spec = {
     vol_max: { name: 'audio-volume-high-symbolic' },
     vol_min: { name: 'audio-volume-muted-symbolic' },    
   },
-  dialogs: {
-    about: { info: 'About Audio Player',  file: '../README.md',  icon: 'info' },
-    close: { ask:  'Close Audio Player?', call: 'respClose', icon: 'exit' },
+  dialogs: {                                                              // Simple text-based `dialogs`
+    about: { info: 'About Audio Player',  file: '../README.md',  icon: 'info' },  // with text in separate file
+    close: { ask:  'Close Audio Player?', call: 'respClose',     icon: 'exit' },  // or inline
   },
-  views: {
-    main: [
-      { title: 'My Audio App', icon: 'card' },
-      { action: 'Play Audio', call: 'playAudio',  icon: 'play' },
-      { action: 'Stop Audio', call: 'stopAudio',  icon: 'stop' },
-      { switch: 'Mute Audio', bind: 'muted', icons: ['vol_max', 'vol_min'] },
-      { action: 'About',    dialog: 'about',  icon: 'info' },
-      { action: 'Settings', view: 'settings', icon: 'gears' },
-      { action: 'Close',    dialog: 'close',  icon: 'exit' },
+  parts: {                                                                // `parts` are reusable components
+    controls: [
+      { act: 'Play', call: 'playAudio',  icon: 'play' },                  // `act` is a small unlabeled
+      { act: 'Stop', call: 'stopAudio',  icon: 'stop' },                  // button with callbacks, icons, and
+    ],                                                                    // the `act` text as tooltip
+  },
+  views: {                                                                // apps can have multiple views
+    player: [      
+      { title: '{{ playing? "Playing: $song" : "Next Song: $song" }}' },  // templates facilitate dynamic tex
+      { use: 'controls' },                                                // just `use` the parts
+      '------------------------------------------------------------',     // easy peasy separators
+      { action: 'About',    dialog: 'about',    icon: 'info' },           // `action` is a labelled button
+      { action: 'Settings', view:   'settings', icon: 'gears' },          // actions and acts can also
+      { action: 'Close',    dialog: 'close',    icon: 'exit' },           // show dialogs and switch views
     ],
     settings: [
       { title: 'Settings', icon: 'gears' },
-      { switch: 'Mute Audio', bind: 'muted', icons: ['vol_max', 'vol_min'] },
-      { action: 'Back', view: 'main',  icon: 'back' },
+      { use: 'controls' },                                                // just `use` the parts again
+      '------------------------------------------------------------',      
+      { switch: '{{muted? "Muted" : "Not Muted"}}', bind: 'muted',        // controls can `bind` to the data
+        icons: ['vol_max', 'vol_min'] },
+      { act: 'Back to Player', view: 'player', icon: 'back' },            // basic view navigation with acts
     ]
   },
-  main: 'main',
+  main: 'player',                                                         // tell the app where to start
 }
 
 // OK, now we have a clean user interface as NoGui "spec".
 // Let's build some business logic for it.
 
-// To allow the app to do something, we need to define
-// some callbacks and a data model as used in the NoGui spec.
+// To allow the app to do something, we need to define some callbacks
+// and a data model that can be referenced from the spec.
 const data = {
-    muted: false,  // nogui will setup data bindings for all fields
+    playing: false,            // nogui will setup data bindings for all fields
+    muted:   false,            // you can `bind` them to your controls or
+    song:    'Cool Song 😎🎶'  // use them as `$vars` and in templates (see spec!)
 }
 const callbacks = {
-    playAudio() { print("PLAY") },  // callback for the Play button
-    stopAudio() { print("STOP") },  // callback for the Stop button
-    respClose(id, code) { if(code == 'OK') app.quit() },  // Dialog handler
+    playAudio() { data.playing = true  },  // callback for the Play button
+    stopAudio() { data.playing = false },  // callback for the Stop button
+    respClose(id, code) { if(code == 'OK') app.quit() },  // dialog handler
 }
 
 // Now we can bring everything together into a GTK app.
@@ -76,7 +86,7 @@ const args = [imports.system.programInvocationName].concat(ARGV)
 const app = new Gtk.Application()
 app.connect('activate', (app) => {
     let window = new Gtk.ApplicationWindow({      
-      title: 'Simple Audio Player', default_width: 240, application:app,
+      title: '🎵 My Music', default_width: 240, application:app,
     })
     let stack = new Gtk.Stack()  // use a Gtk.Stack to manage views
     window.set_child(stack)
@@ -98,7 +108,7 @@ app.connect('activate', (app) => {
     ui.buildWidgets()
 
     // The builder now has all `ui.views`, `ui.icons`, and `ui.dialogs`.
-    // Only the views need to added to the parent controls.
+    // Only the views need to be added to the parent controls.
     for (const v of ui.views) stack.add_named(v.widget, v.name)
 
     // The ctl.showView handler allows switching views manually

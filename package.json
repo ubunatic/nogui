@@ -1,6 +1,6 @@
 {
   "name": "nogui",
-  "version": "1.0.12",
+  "version": "1.0.20",
   "description": "Render GTK controls from NoGui Spec",
   "main": "src/nogui.js",
   "scripts": {
@@ -24,7 +24,8 @@
     "gtk",
     "gnome",
     "gui",
-    "wysiwym"
+    "wysiwym",
+    "ui"
   ],
   "author": "Uwe Jugel",
   "license": "MIT",
