@@ -4,14 +4,13 @@
 
 const binding = require('./binding')
 
-var Controller = class Controller extends binding.Bindable {
+var Controller = class Controller {
     constructor({window={}, data={}, callbacks={}, dialogs={}, showView=null}) {
-        super(binding.bindAll(data))
-        this.window      = window       
-        this.data        = data
-        this.callbacks   = callbacks
-        this.dialogs     = dialogs
-        this.showView    = showView
+        this.data      = new binding.Bindable(data)
+        this.window    = window
+        this.callbacks = callbacks
+        this.dialogs   = dialogs
+        if (showView != null) this.showView = showView
     }
     showView(name) {
         throw new Error(`Controller.showView not set`)
@@ -33,7 +32,8 @@ var Controller = class Controller extends binding.Bindable {
         }
         logError(new Error(`dialog '${name}' not found`))
     }
-    _add_dialogs(dialogs) {
+    /** @param {Object<string,Gtk.MessageDialog>} dialogs */
+    addDialogs(dialogs) {
         dialogs.forEach(d => this.dialogs[d.name] = d)
     }    
 }

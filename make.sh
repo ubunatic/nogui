@@ -3,9 +3,11 @@
 set -o errexit
 set -o pipefail
 set -o errtrace
+set -o functrace
 
-fail() { echo -e "[FAIL] $*"; exit 1; }
-ok()   { echo -e "[OK] $*\n";         }
+fail() { echo -e "[FAIL] $*" 1>&2; exit 1; }
+ok()   { echo -e "[OK]   $*\n" 1>&2;       }
+log()  { echo -e "[INFO] $*\n" 1>&2;       }
 
 test_expr() {
     node test/expression_test.js ||
@@ -13,10 +15,30 @@ test_expr() {
     ok   "expressions tested"
 }
 
+test_bind() {
+    node test/binding_test.js    &&
+    node test/controller_test.js ||
+    fail "binding test failed"
+    ok   "binding tested"
+}
+
+test_poly() {
+    test/poly_test.js --gui 3 &&
+    test/poly_test.js --gui 4 ||
+    fail "binding test failed"
+    ok   "binding tested"
+}
+
 test_demo() {
     run_demo -h ||
     fail "failed to run demo"
     ok   "demo tested"
+}
+
+test_app() {
+    run_app -h ||
+    fail "failed to run example app"
+    ok   "app tested"
 }
 
 test_lint() {
@@ -35,7 +57,7 @@ run_bench() { test_expr; }
 
 run_test() {
     if test $# -eq 0 || test "$*" = "all"
-    then tests="expr demo lint"
+    then tests="expr bind poly demo lint"
     else tests="$*"
     fi
     for t in $tests; do "test_$t"; done
@@ -45,7 +67,7 @@ run_test() {
 # finds the first Markdown JS code section
 find_code()      { awk -v sec=$1 '/^```/ { code++; next } code == sec';                    }
 codegen_header() { echo "// This file was generated from ../../README.md. Do not modify!"; } 
-run_generate()   { ( codegen_header; cat README.md | find_code 1 ) > "$demo/src/app.js";  }
+run_generate()   { ( codegen_header && cat README.md | find_code 1 ) > "$demo/src/app.js";  }
 
 nodemon=node_modules/.bin/nodemon
 webpack=node_modules/.bin/webpack
@@ -60,13 +82,15 @@ run_build_example() { make -C $example build; }
 run_install()       { sudo npm install   -g .; }
 run_uninstall()     { sudo npm uninstall -g .; }
 run_ext()           { GJSEXT_USE_GTK=4 gjsext examples/audio-player/lib/extension.js; }
-run_app()           { GJSEXT_USE_GTK=4 examples/audio-player/bin/nogui-audio-player;  }
+run_app()           { examples/audio-player/bin/nogui-audio-player; }
 run_reuse()         { reuse addheader -y 2021 src/*.js -l MIT -c 'Uwe Jugel';         }
 
 run_nodemon_build(){
-    run_webpack       || fail 'faild to pack'
-    run_build_example || fail 'build failed'
-    run_app           || fail 'demo app crashed'
+    log "NODEMON BUILD START"
+    run_webpack       || fail 'NODEMON BUILD FAILED: failed to pack'
+    run_build_example || fail 'NODEMON BUILD FAILED: build failed'
+    run_app           || fail 'NODEMON BUILD FAILED: demo app crashed'
+    log "NODEMON BUILD OK"
 }
 
 if test $# -eq 0

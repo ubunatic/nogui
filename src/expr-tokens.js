@@ -93,13 +93,13 @@ function tokenizeLiteral(lit, mode=MODE.AUTO) {
         // assume lit is raw string literal
     }
 
-    log(`tokenizing string literal: ${lit}`)
+    debug(`tokenizing string literal: ${lit}`)
     let tokens = []
 
     while (lit.length > 0) {
         let m, name, src
         for (const token_name in LEXLIT) {
-            log(`checking for token ${token_name} in ${lit}`)
+            // debug(`checking for token ${token_name} in ${lit}`)
             if (m = lit.match(LEXLIT[token_name])) {
                 name = token_name
                 src = m[1] != null? m[1] : m[0]
@@ -129,13 +129,20 @@ function tokenizeLiteral(lit, mode=MODE.AUTO) {
         lit = lit.slice(m[0].length)
     }
 
+    // convert to string
+    if (tokens.length == 1) tokens = [
+        new Token(TOKEN.LIT, "''"),
+        new Token(TOKEN.CONCAT, '..'),
+        ...tokens,
+    ]
+
     if (tokens.length > 1) tokens = [
         new Token(TOKEN.LPAR, '('),
         ...tokens,
         new Token(TOKEN.RPAR, ')'),
     ]
 
-    log(`literal tokens`, tokens)
+    // debug(`literal tokens`, tokens)
 
     return tokens
 }

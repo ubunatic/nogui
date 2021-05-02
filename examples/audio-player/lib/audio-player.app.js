@@ -5,8 +5,12 @@
 /***/ ((__unused_webpack_module, __unused_webpack_exports, __webpack_require__) => {
 
 
-imports.gi.versions.Gtk = '4.0'
+const USE_GTK = imports.gi.GLib.getenv('USE_GTK')
+if (USE_GTK) imports.gi.versions.Gtk = USE_GTK
+log(`using GTK version: ${imports.gi.Gtk.get_major_version()}`)
+
 const MyAudio = __webpack_require__(989)  // webpack import for `imports.lib.myaudio`
+const poly = __webpack_require__(877).poly       // webpack import for `imports.lib.myaudio`
 const {Gio, GLib, Gtk} = imports.gi      // regular import without need for webpack
 
 // first setup some main-file logic to locate the NoGui file and other assets
@@ -39,16 +43,16 @@ app.connect('handle-local-options', (app, d) => {
 })
 app.connect('activate', (app) => {
     let w = new Gtk.ApplicationWindow({application:app, ...window_opt})
-    
+
     // now load the actual audio player app and add its `Gtk.Widget`
     let player = new MyAudio.Player(asset_dir, w)
-    w.set_child(player.widget)
+    poly.append(w, player.widget)
     w.show()
     w.connect('destroy', () => app.quit())
 
     // finally start to do something with the app
     if (songs.length > 0) player.songs = songs
-    player.playAudio()
+    player.playSong()
     if (play_and_quit) {
         print('quit')
         w.close()
@@ -64,13 +68,13 @@ app.run(args)
 /***/ 989:
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
-imports.gi.versions.Gtk = '4.0'   // define which GTK version we support
+imports.gi.versions.Gtk = '4.0'        // define which GTK version we support
 const { GLib, Gtk, Gio } = imports.gi  // regular import without need for webpack
 
-const nogui = __webpack_require__(877)    // webpack import for `imports.<path>.nogui`
-nogui.setVerbose(true)            // show UI builder logs and more
+const nogui = __webpack_require__(877)   // webpack import for `imports.<path>.nogui`
+nogui.logging.setVerbose(false)  // show UI builder logs and more
 
-const { asyncTimeout } = __webpack_require__(555)  // webpack local import
+const { asyncTimeout } = nogui.poly
 
 let song_counter = 0
 
@@ -78,7 +82,7 @@ class Song {
     constructor(name, playlist_number=null) {
         if (!playlist_number) {
             playlist_number = (song_counter += 1)
-        }     
+        }
         this.name = name
         this.playlist_number = playlist_number
     }
@@ -102,12 +106,12 @@ class Model {
 }
 
 // Also our player needs some logic that works with the data.
-class AudioPlayer extends Model {
+class SongPlayer extends Model {
     async Play(ctx) {
         this.playing = true
         let stop = false
         ctx.connect(() => stop = true)
-        const play = async (num) => {
+        const playNext = async (num) => {
             if (this.songs.length == 0 || stop || num > this.songs.length) {
                 // nothing to play or must stop
                 return
@@ -115,12 +119,12 @@ class AudioPlayer extends Model {
             let song = this.song = this.songs[num - 1]
             print('playing song', song)
             // simulate playing and report progress
-            for (let i = 0; i < 1200; i++) {                
+            for (let i = 0; i < 1200; i++) {
                 await asyncTimeout(() => {}, 100)
                 if (stop) return
                 if (i%10 != 0) continue
                 let s = i/10
-                this.progress = `${Math.floor(s/600)}${Math.floor(s/60)}:${Math.floor(s%60/10)}${s%10}`                
+                this.progress = `${Math.floor(s/600)}${Math.floor(s/60)}:${Math.floor(s%60/10)}${s%10}`
             }
             return true
         }
@@ -130,21 +134,20 @@ class AudioPlayer extends Model {
                 this.next_song = 1
             }
             while (this.next_song <= this.songs.length) {
-                await play(this.next_song)
+                await playNext(this.next_song)
                 if (stop) return
                 this.next_song += 1
             }
             this.next_song = 1
-        } finally {
-            this.playing = false
-            this.song = ''
-            this.progress = ''
+        }
+        catch (e) {
+            logError(e)
         }
     }
 }
 
 // To interact with the UI we need some handlers and add trackable UI state.
-class MyAudioController extends AudioPlayer {
+class SongController extends SongPlayer {
     constructor() {
         super()
         this.view = null
@@ -152,34 +155,37 @@ class MyAudioController extends AudioPlayer {
         /** @type {Promise} prom - reusable Play promise to await end of playing */
         this.prom = null
     }
-    async playAudio() {
+    async playSong() {
         if (this.playing) return
-        if (this.ctx) this.ctx.cancel()
+        await this.stopSong()
         this.ctx = new Gio.Cancellable()
         this.prom = this.Play(this.ctx)
-        try { await this.prom; print('finished playing') }
+        try       { await this.prom; print('finished playing') }
         catch (e) { logError(e) }
+        this.playing = false
+        this.song = ''
+        this.progress = ''
         this.prom = null
     }
     async nextSong() {
         let restart = this.playing? true : false
-        if (restart) await this.stopAudio()
+        if (restart) await this.stopSong()
         if (this.next_song < this.songs.length) this.next_song += 1
         else                                    this.next_song = 1
-        if (restart) this.playAudio()
+        if (restart) this.playSong()
     }
     async prevSong() {
         let restart = this.playing? true : false
-        if (restart) await this.stopAudio()
+        if (restart) await this.stopSong()
         if (this.next_song > 1) this.next_song -= 1
         else                    this.next_song = this.songs.length
-        if (restart) this.playAudio()
+        if (restart) this.playSong()
     }
-    async stopAudio() {
+    async stopSong() {
         if (this.ctx) this.ctx.cancel()
         if (this.prom) await this.prom
     }
-    openFile()  { 
+    openFile()  {
         const s = new Song(`Song "🎶 ${this.songs.length + 1} 🎶"`)
         this.songs.push(s)
         print('added song', this.songs.slice(-1))
@@ -190,11 +196,13 @@ class MyAudioController extends AudioPlayer {
     }
 }
 
-class Player extends MyAudioController {
+/** Main audio player class with all needed controls  */
+class Player extends SongController {
     constructor(assets_dir='.', window) {
         super()
         // A `Gtk.Stack` serves as main widget to manage views.
         let stack = this.widget = new Gtk.Stack()
+        stack.show()
 
         this.forceQuit = () => window.close()
 
@@ -207,11 +215,11 @@ class Player extends MyAudioController {
             }
         })
 
-        ctl.bindProperty('songs',
+        ctl.data.bindProperty('songs',
             (v)   => { this.num_songs = this.songs.length },
             (k,v) => { this.num_songs = this.songs.length },
         )
-        ctl.bindProperty('song',
+        ctl.data.bindProperty('song',
             (v)   => { this.song_name = this.song.name },
             (k,v) => { this.song_name = this.song.name },
         )
@@ -220,8 +228,8 @@ class Player extends MyAudioController {
         let spec_file = GLib.build_filenamev([assets_dir, 'spec.js'])
 
         // A `nogui.Builder` builds the UI.
-        let ui = new nogui.Builder(spec_file, ctl, assets_dir)
-        ui.buildWidgets()
+        let ui = new nogui.Builder(spec_file, ctl, ctl.data, assets_dir)
+        ui.build()
 
         // The builder now has all `ui.views`, `ui.icons`, and `ui.dialogs`.
         // Only the views need to added to the parent controls.
@@ -233,34 +241,12 @@ class Player extends MyAudioController {
 
         // Data bindings are set up automatically, so that we can adjust
         // values and they will be reflected in the UI
-        this.muted = true  
+        this.muted = true
     }
 }
 
 module.exports = { Player }
 
-
-/***/ }),
-
-/***/ 555:
-/***/ ((module) => {
-
-const { GLib } = imports.gi
-
-/** returns a new `Promise` to be resolved or rejected with the result or error
- *  produced by calling `func` after a `delay_ms` timeout.
-*/
-function asyncTimeout(func, delay_ms=0, ...args) {
-    return new Promise((resolve, reject) => {
-        return GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay_ms, () => {
-            try       { resolve(func(...args)) }
-            catch (e) { reject(e) }
-            return GLib.SOURCE_REMOVE
-        })
-    })
-}
-
-module.exports = { asyncTimeout }
 
 /***/ }),
 
@@ -2181,6 +2167,55 @@ if (__is_nodejs_main) {
 
 /***/ }),
 
+/***/ 99:
+/***/ (function(module) {
+
+
+function typeStr(o) { return (o && o.constructor)? o.constructor.name : typeof o }
+function typ(...o)  { return o.map(typeStr).join(', ') }
+
+function Null(v, msg='assert.Null', ...o) {
+    assert(v == null, `${msg}, got ${v}, expected null`, ...o)
+}
+
+function NotNull(v, msg='assert.NotNull', ...o) {
+    assert(v != null, `${msg}, got ${v}, expected non-null`, ...o)
+}
+
+function NotEq(v, e, msg='assert.NotEq', ...o) {
+    assert(v != e, `${msg}, got ${v} == ${e}`, ...o)
+}
+
+function Eq(v, e, msg='assert.Eq', ...o) {
+    assert(v == e, `${msg}, got ${v}, expected ${e}`, ...o)
+}
+
+function True(val, msg='assert.True', ...o) {
+    assert(val, msg, ...o)
+}
+
+function False(val, msg='assert.False', ...o) {
+    assert(!val, msg, ...o)
+}
+
+function assert(val, msg='assert', ...o) {
+    if (!val) throw new Error(`${msg} ${typ(...o)}`)
+}
+
+if (!this.module) this.module = {}
+module.exports = {
+    Null:    Null,
+    NotNull: NotNull,
+    Eq:      Eq,
+    NotEq:   NotEq,
+    True:    True,
+    False:   False,
+    assert:  assert,
+}
+
+
+/***/ }),
+
 /***/ 329:
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
@@ -2191,7 +2226,7 @@ if (__is_nodejs_main) {
 /**
  * Bindings Module
  * @module binding
- * 
+ *
  * This module contains classes and functions for controlling
  * data bindings and object proxies.
  */
@@ -2200,51 +2235,74 @@ let GObject
 try       { GObject = imports.gi.GObject.Object }
 catch (e) { GObject = class GObject {}}
 
-const logging = __webpack_require__(347)
-const { log, debug, setVerbose, obj } = new logging.Logger('binding')
+const HasBindings = Symbol('HasBindings')
+const ProxyInfo   = Symbol('ProxyInfo')
+const BindInfo    = Symbol('BindInfo')
+
+const logger = __webpack_require__(347).getLogger('binding')
+const { log, debug, typ, str, len } = logger
+const assert = __webpack_require__(99)
 const { parseExpr, parseLiteral } = __webpack_require__(755)
 
 const _ = (obj) => Object.keys(obj).map(k => `${k}:${obj[k]}`).join(',')
 
-function proxy(obj, onChange) {
-    if (!isProxiable(obj)) return obj
-    debug('create', obj)
-    return new Proxy(obj, {
+let next_proxy_id = 1
+
+function createProxy(obj) {
+    if (obj[ProxyInfo] != null) return obj
+    log(`createProxy(${typ(obj)}, status=${getUnbindableReason(obj) || 'bindable'})`)
+    if (!isBindable(obj)) return obj
+    let targets = []
+    let bind_id = 0
+    const p = new Proxy(obj, {
         deleteProperty: function(obj, k) {
             delete obj[k]
-            onChange(k, null)
+            for (const t of targets) if (t) t(k, null)
             return true
         },
-        set: function(obj, k, v) {      
+        set: function(obj, k, v) {
             obj[k] = v
-            onChange(k, v)
-            return true;
+            for (const t of targets) if (t) t(k, v)
+            return true
         }
     })
+    p[ProxyInfo] = {
+        id: next_proxy_id++,
+        connect:    (onChange) => { bind_id++; targets[bind_id] = onChange; return bind_id },
+        disconnect: (id)       => { delete targets[id] }
+    }
+    return p
 }
 
-function isBindable(obj) {
-    if (typeof obj == 'function') return false
-    if (obj instanceof Promise)   return false  // don't fiddle with Promises
-    if (obj instanceof GObject)   return false  // don't fiddle with GObject, only pure data objects allowed
-    return true
+function getUnbindableReason(obj) {
+    if (obj == null)              return 'cannot bind to null'
+    if (typeof obj == 'function') return 'cannot bind to function'
+    if (typeof obj != 'object')   return 'cannot bind to non-objects'
+    if (obj[HasBindings])         return 'cannot reuse objects with bindings'
+    if (obj[ProxyInfo])           return 'cannot reuse proxied objects'
+    if (obj instanceof Bindable)  return 'cannot reuse Bindables'
+    if (obj instanceof Binding)   return 'cannot reuse Bindings'
+    if (obj instanceof Promise)   return 'cannot bind to Promise'
+    if (obj instanceof GObject)   return 'cannot bind to GObject'
+    return null
 }
 
-function isProxiable(obj) { return (
-    isBindable(obj)           &&
-    typeof obj == 'object'    &&  // only 'objects' can be proxied
-    obj != null
-)}
+function isBindable(obj) { return getUnbindableReason(obj) == null }
 
+/** @class Binding makes object properties bindable.
+ * If the assigned value to the property is again a bindable object,
+ * this object will also be "proxied" to bubble up property changes.
+ * This does not create a real binding
+*/
 var Binding = class Binding {
     constructor(obj, field) {
         const val = obj[field]  // current value
 
-        const type = obj.constructor? obj.constructor.name : typeof obj
-        debug(`create Binding([${type}], '${field}')`)
+        debug(`create Binding(${typ(obj)}, ${field}:${typ(val)})`)
 
         this.targets = {}
         this.prop_targets = {}
+        this.proxy_bind_id = 0
         this.bind_id = 0
         this.field   = field
         this.obj     = obj
@@ -2252,7 +2310,26 @@ var Binding = class Binding {
         this.getter = () => this.value
         this.setter = (val) => {
             if (val != this.value) {
-                val = proxy(val, (k, v) => this.propChanged(k, v))
+                // disconnect previous proxied value before overwriting
+                if (this.value != null && this.value[ProxyInfo] != null) {
+                    this.value[ProxyInfo].disconnect(this.proxy_bind_id)
+                    this.proxy_bind_id = 0
+                }
+
+                // automatically listen to array element changes to avoid
+                // managing separate list Bindings
+                // setting `val` to null will remove the binding (see above)
+                if (Array.isArray(val)) {
+                    val = createProxy(val)
+                    this.proxy_bind_id = val[ProxyInfo].connect((k, v) => {
+                        // report any change as fully change of the array
+                        // checking for length changes is not sufficient,
+                        // since individual elements may have been replaced
+                        this.valueChanged(val)
+                    })
+                }
+
+                // finally set the value as the current value and emit the change
                 this.value = val
                 this.valueChanged(val)
             }
@@ -2262,145 +2339,159 @@ var Binding = class Binding {
             get: this.getter,
             set: this.setter,
         })
-    
+
         obj[field] = val
     }
     valueChanged(v){
         Object.values(this.targets).forEach(t => t(v))
         return this
     }
-    propChanged(k, v){
-        Object.values(this.prop_targets).forEach(t => t(k, v))
-        return this
-    }
-    connect(onChange, onPropChange=null){
-        const id = (this.bind_id++)
-        this.targets[id] = onChange
-        if (onPropChange) this.prop_targets[id] = onPropChange
+    connect(onChange) {
+        const id = (this.bind_id += 1)
+        if (onChange) this.targets[id] = onChange
         return id
     }
     disconnect(id){
         delete this.targets[id]
-        delete this.prop_targets[id]
     }
 }
 
 /**
- * parse_template parses a template string an returns a template array,
- * the found template fields, and a setter for updating values.
- * 
- * @param {string} s     - template string with variable expressions
- * @param {string} self  - source of the template
- * 
- * The getter returns the complete string. The setter requires a variable name and a value
- * to be updated. The fields are the variable names found in the template.
+ * bindTpl parses a template string an returns all found fields and
+ * a template value getter to obtain the current template value,
+ * based on the bound `data` and `self` objects.
+ *
+ * @param {string} s      - template string with variable expressions
+ * @param {object} data   - data used by the expression
+ * @param {string} self   - source of the template
+ *
+ * The `value` getter returns the completed string.
+ * The fields are the variable names found in the template.
  */
-function parse_template(s, self=null) {
-    let tpl = ''
+function bindTpl(s, data=null, self=null) {
+    // debug(`expr.bindTpl data=${typ(data)}`)
     let { expr, fields } = parseLiteral(s)
-
-    let getter = null, setter = null
-    if (fields != null) {
-        let data = {}  // copy of the watched data, used for evaluation via `expr.exec`
-
-        getter = () => tpl
-        /**
-         * @param {string} field - name of variable to update
-         * @param {string} val   - value to put in the template
-         * @returns {boolean}    - true if value changed, false otherwise
-         */
-        setter = (field, val) => {
-            // ignore updates for know values that did not change
-            if      (!(field in data))   { debug(`init tpl field: ${field}:${val}`) }
-            else if (val == data[field]) { debug(`ignore tpl field: ${field}:${val}`); return false }
-            else                         { debug(`update tpl field: ${field}:${val}`) }
-
-            if (field in data && data[field] == val) return false
-            data[field] = val                // store last know value
-            
-            let res = expr.exec(data, self)  // compute expr result
-            if (tpl != res) {
-                tpl = res
-                return true
-            }
-            return false
-        }
-    }
-    return { fields, setter, getter }
+    return { get value() {
+        // debug(`expr.bindTpl.value data=${typ(data)}, data.data=${str(data.data)}`)
+        return expr.exec(data, self)
+    }, fields }
 }
 
-function parse_expr(s) {
-    const {tokens, expr} = parseExpr(s)
-    let comp = (row, data) => expr.exec(data, row)
-    let fields = expr.fields
-    // debug(`parsed ${tokens} as ${expr} with fields`, obj(expr.fields))
-    return { comp, fields }
+/**
+ * bindExpr parses an expression string an returns all found fields and
+ * a value getter to obtain the current value defined by the expression by
+ * evaluating the bound `data` and `self` objects.
+ *
+ * @param {string} s      - expression syntax
+ * @param {object} data   - data used by the expression
+ * @param {string} self   - source of expression
+ *
+ * The `value` getter returns the computed value of the expression.
+ * The fields are the variable names found in the expression syntax.
+ */
+function bindExpr(s, data=null, self=null) {
+    const { expr, fields } = parseExpr(s)
+    return { get value() { return expr.exec(data, self) }, fields }
 }
 
 /** @class base class for objects with bindable properties */
 var Bindable = class Bindable {
     /**
-     * @param {Object<string,Binding>} bindings
-     * @param {Bindable}               parent
+     * @param {object}          data
+     * @param {object|Bindable} parent
      */
-    constructor(bindings={}, parent=null) {
+    constructor(data={}, parent=null) {
         /** @type {Object<string,Binding>} bindings */
-        this.bindings = bindings
+        this.bindings = bindAll(data)
+        this.data = data
+        data[BindInfo] = this
+
         /** @type {Object<string,Binding[]>} template_bindings */
         this.template_bindings = {}
-        this.next_template_binding_id = 0
-        this.parent = parent
+        this.property_bindings = {}
+        this.next_binding_id = 0
+
+        /** @type {Bindable} */
+        this.parent = null
+        if (parent instanceof Bindable) this.parent = parent
+        else if (parent != null)        this.parent = Bind(parent)
     }
 
-    getBinding(name) {
-        // TODO: recursion check
-        if (name.startsWith('$')) return this.parent.getBinding(name.slice(1))
+    /** @returns {Binding} */
+    getBinding(name, depth=0) {
+        // log(`getBinding(${name})`)
+        if (depth > 100) throw new Error(`getBinding recursion error, cyclic data models are not supported`)
+        if (name.startsWith('$')) return this.parent.getBinding(name.slice(1), depth+1)
         else                      return this.bindings[name]
     }
+
+    getBindingValue(name) {
+        return this.getBinding(name).value
+    }
+
+    getManagedID(name, id) { return `${name}:${id}` }
+
+    toString() { return `${typ(this)}(data=${typ(this.data)}, parent=${typeof this.parent}}` }
 
     /**
      * @callback valueSetter
      * @param {*} value - the changed value
     */
     /**
-     * @param {string} name 
+     * @param {string} name
      * @param {valueSetter} onChange
-     * @returns {{id: number, setter: valueSetter}}
+     * @returns {{id:number, setter:valueSetter}}
     */
     bindProperty(name, onChange, onPropChange=null) {
         let b = this.getBinding(name)
-        if (!b) throw new Error(debug(`missing binding "${name}" in data model of`, this))
+        if (!b) throw new Error(debug(`missing binding "${name}" in ${this}`))
+
         const id = b.connect(onChange, onPropChange)
+        const binding_id = this.getManagedID(name, id)
+        this.property_bindings[binding_id] = {name, id}
         return {id, setter:b.setter}
     }
-    unbindProperty(name, id) {
-        let b = this.getBinding(name)
-        if (b) b.disconnect(id)
-    }
-    getBindingValue(name) {
-        return this.getBinding(name).value
-    }
-    bindTemplate(tpl, onChange, self=null) {
-        let { fields, setter, getter } = parse_template(tpl, self)
-        if (fields == null) return null
-        debug(`bindTemplate tpl='${tpl}', fields=${obj(fields)}`)
 
-        // ensure we keep track of all bindings        
-        let bindings = []
-        let binding_id = (this.next_template_binding_id += 1)
+    bindExpr(syntax, onChange, self=null) {
+        const expr = bindExpr(syntax, this.data, self)
+        let id = this.bindFields(expr.fields, () => onChange(expr.value))
+        onChange(expr.value)  // update expr once to init GUI states
+        return {id, expr}
+    }
+
+    bindTemplate(tpl, onChange, self=null) {
+        const expr = bindTpl(tpl, this.data, self)
+        let id = this.bindFields(expr.fields, () => onChange(expr.value))
+        onChange(expr.value)  // update template once to avoid weird values
+        return {id, expr}
+    }
+
+    // binds multiple fields to one change handler
+    bindFields(fields, onFieldChange) {
+        // no need to bind static text
+        if (len(fields) == 0) return null
+
+        // ensure we keep track of all bindings
+        const bindings = []
+        const binding_id = (this.next_binding_id += 1)
         this.template_bindings[binding_id] = bindings
 
-        for (const name in fields) {                                            
-            let { id } = this.bindProperty(name, (v) => {
-                if (setter(name, v)) onChange(getter())
-            })
-            let val = this.getBindingValue(name)
-            setter(name, val)
+        for (const name in fields) {
+            let { id } = this.bindProperty(name, (v) => onFieldChange(name, v))
             bindings.push({name, id})
         }
-        onChange(getter())  // update template once to avoid weird values
         return binding_id
     }
+
+    unbindProperty(name, id) {
+        let b = this.getBinding(name)
+        if (b) {
+            b.disconnect(id)
+            const binding_id = this.getManagedID(name, id)
+            delete this.property_bindings[binding_id]
+        }
+    }
+
     unbindTemplate(id) {
         let bindings = this.template_bindings[id]
         if (bindings) for (const {name,id} of bindings) {
@@ -2408,24 +2499,45 @@ var Bindable = class Bindable {
         }
         delete this.template_bindings[id]
     }
+
+    unbindExpr(id) { this.unbindTemplate(id) }
+
+    unbindAll() {
+        for (const id in this.template_bindings)                        this.unbindTemplate(id)
+        for (const {name, id} of Object.values(this.property_bindings)) this.unbindProperty(name, id)
+    }
 }
 
 /**
  * bindAll creates a Binding for all properties of `data` making them bindable
- * using the returned bindings.
- * 
- * @param {object} data 
- * @returns {Object.<string, Binding>}
+ * using the returned `bindings`; also marks the `data` with Symbol `HasBindings`
+ *
+ * @param {object} data
+ * @returns {Object<string,Binding>}
  */
- function bindAll(data) {
+function bindAll(data) {
+    debug(`bindAll(${typ(data)})`)
+    let msg = getUnbindableReason(data)
+    if (msg) throw new Error(`bindAll(${typ(data)}) failed: ${msg}`)
+
     let bindings = {}
     for (const k in data) {
-        if (isBindable(data[k])) bindings[k] = new Binding(data, k)
+        bindings[k] = new Binding(data, k)
     }
+    data[HasBindings] = true
     return bindings
 }
 
-module.exports = { Binding, Bindable, bindAll, parse_expr, parse_template, setVerbose }
+/** return an objects Bindable and setup new Bindable if needed
+ * @returns {Bindable}
+*/
+function Bind(data, parent=null) {
+    if (data[BindInfo] == null) new Bindable(data, parent)
+    assert.NotNull(data[BindInfo], `failed to setup BindInfo`)
+    return data[BindInfo]
+}
+
+module.exports = { Bind, Binding, Bindable, bindAll, bindExpr, bindTpl, BindInfo }
 
 
 /***/ }),
@@ -2439,14 +2551,13 @@ module.exports = { Binding, Bindable, bindAll, parse_expr, parse_template, setVe
 
 const binding = __webpack_require__(329)
 
-var Controller = class Controller extends binding.Bindable {
+var Controller = class Controller {
     constructor({window={}, data={}, callbacks={}, dialogs={}, showView=null}) {
-        super(binding.bindAll(data))
-        this.window      = window       
-        this.data        = data
-        this.callbacks   = callbacks
-        this.dialogs     = dialogs
-        this.showView    = showView
+        this.data      = new binding.Bindable(data)
+        this.window    = window
+        this.callbacks = callbacks
+        this.dialogs   = dialogs
+        if (showView != null) this.showView = showView
     }
     showView(name) {
         throw new Error(`Controller.showView not set`)
@@ -2468,7 +2579,8 @@ var Controller = class Controller extends binding.Bindable {
         }
         logError(new Error(`dialog '${name}' not found`))
     }
-    _add_dialogs(dialogs) {
+    /** @param {Object<string,Gtk.MessageDialog>} dialogs */
+    addDialogs(dialogs) {
         dialogs.forEach(d => this.dialogs[d.name] = d)
     }    
 }
@@ -2617,13 +2729,13 @@ function tokenizeLiteral(lit, mode=MODE.AUTO) {
         // assume lit is raw string literal
     }
 
-    log(`tokenizing string literal: ${lit}`)
+    debug(`tokenizing string literal: ${lit}`)
     let tokens = []
 
     while (lit.length > 0) {
         let m, name, src
         for (const token_name in LEXLIT) {
-            log(`checking for token ${token_name} in ${lit}`)
+            // debug(`checking for token ${token_name} in ${lit}`)
             if (m = lit.match(LEXLIT[token_name])) {
                 name = token_name
                 src = m[1] != null? m[1] : m[0]
@@ -2653,13 +2765,20 @@ function tokenizeLiteral(lit, mode=MODE.AUTO) {
         lit = lit.slice(m[0].length)
     }
 
+    // convert to string
+    if (tokens.length == 1) tokens = [
+        new Token(TOKEN.LIT, "''"),
+        new Token(TOKEN.CONCAT, '..'),
+        ...tokens,
+    ]
+
     if (tokens.length > 1) tokens = [
         new Token(TOKEN.LPAR, '('),
         ...tokens,
         new Token(TOKEN.RPAR, ')'),
     ]
 
-    log(`literal tokens`, tokens)
+    // debug(`literal tokens`, tokens)
 
     return tokens
 }
@@ -3019,21 +3138,42 @@ module.exports = { parseExpr, parseLiteral, SymParent, logger }
 //
 // SPDX-License-Identifier: MIT
 
-const typeString = (obj) => obj.constructor? obj.constructor.name : typeof obj
-
-function objectString(...objects) {
-    let res = []
-    for (const obj of objects) {
-        let s = ''
-        try       { s = JSON.stringify(obj) }
-        catch (e) { s = `${obj}` }
-        try {
-            if (s.length > 40) s = s.slice(0,39) + '…'
-            res.push(`${typeString(obj)}(${s})`)
-        } catch (e) { logError(e) }
-    }
-    return res.join(', ')
+var ELLIPS = {
+    LEN: 60,
+    STR: '…',
 }
+
+/** returns the main class name or type of the object */
+function typeString(obj) {
+    return (obj && obj.constructor)? obj.constructor.name : typeof obj
+}
+
+/** returns the class or type and an ellipsed value of the object */
+function objectString(obj) {
+    let s = ''
+    try       { s = JSON.stringify(obj) }
+    catch (e) { s = `${obj}` }
+    if (s === undefined) s = 'undefined'
+    try {
+        if (s.length > ELLIPS.LEN) s = `${s.slice(0, ELLIPS.LEN - 1)}${ELLIPS.STR}`
+        s = `${typeString(obj)}(${s})`
+    } catch (e) {
+        error(e)
+        throw e
+    }
+    return s
+}
+
+/** returns the main class names or types of the objects */
+const typeStrings = (...o) => o.map(typeString).join(', ')
+var typ = typeStrings
+
+/** returns the classes or types and ellipsed values of the objects */
+const objectStrings = (...o) => o.map(objectString).join(', ')
+var str = objectStrings
+
+/** returns `length` of object of number of keys */
+var len = (o) => o.length != null? o.length : Object.keys(o).length
 
 /** defaultLogMessage show a log message `msg`
  *  prepends optional `labels` in []-brackets and
@@ -3062,7 +3202,7 @@ const self = this
 // setup default loggers for different systems
 // TODO: better system detection
 let _window = {}, _console = {}
-try { _window  = window  } catch (e) {}  // system is GJS 
+try { _window  = window  } catch (e) {}  // system is GJS
 try { _console = console } catch (e) {}  // system is Node.js
 try { _print   = print   } catch (e) {}  // other system with "print" as fallback
 
@@ -3076,6 +3216,8 @@ var Logger = class Logger {
         const debug = parent && parent.debug || _console.log   || _window.log       || _print
         const error = parent && parent.error || _console.error || _window.logError  || _print
         this.name = name
+        this.labels = this.name? [name] : []
+        this.connected = []
         this.level = INFO
 
         // public functions bound to `this` logger so they can be called without `this`
@@ -3085,18 +3227,31 @@ var Logger = class Logger {
         this.setVerbose = (v=true) => this.level = v? DEBUG : INFO
         this.setSilent  = (v=true) => this.level = v? ERROR : INFO
         this.reset      = ()       => this.level = INFO
-        this.setLevel   = (level)  => this.level = level        
+        this.setLevel   = (level)  => this.level = level
 
         // formatters for inspecting types and objects
-        this.obj = objectString
-        this.typ = typeString
+        this.str = str
+        this.typ = typ
+        this.len = len
         // setup default formatter
         this.fmt = defaultLogMessage
 
         // log functions (callable without `this`)
-        this.log   = (msg, ...objs) => { if (this.l >= INFO)  info(this.fmt(msg,  ['info',  this.name], objs)) }
-        this.error = (msg, ...objs) => { if (this.l >= ERROR) error(this.fmt(msg, ['error', this.name], objs)) }
-        this.debug = (msg, ...objs) => { if (this.l >= DEBUG) debug(this.fmt(msg,  ['debug', this.name], objs)) }
+        this.log   = (msg, ...objs) => { if (this.l >= INFO)  info(this.fmt(msg,  ['info',  ...this.labels], objs)) }
+        this.error = (msg, ...objs) => { if (this.l >= ERROR) error(this.fmt(msg, ['error', ...this.labels], objs)) }
+        this.debug = (msg, ...objs) => { if (this.l >= DEBUG) debug(this.fmt(msg, ['debug', ...this.labels], objs)) }
+    }
+
+    get level()  { return this._level }
+    set level(l) {
+        this._level = l
+        this.connected.forEach(fn => fn(l))
+    }
+
+    /** connect a level change handler to propagate runtime level changes */
+    connect(onLevelChange) {
+        this.connected.push(onLevelChange)
+        onLevelChange(this.level)
     }
 
     // shortcut for less code in log logic above
@@ -3105,8 +3260,35 @@ var Logger = class Logger {
     // ATTENTION: Do not add any class methods here since log methods are often used without valid `this`.
 }
 
+/** @type {Object<string,Logger>} */
+const loggers = {}
+function getLogger(name) {
+    if (!(name in loggers)) {
+        loggers[name] = new Logger(name)
+    }
+    return loggers[name]
+}
+
+function applyAll(fn) { for (const name in loggers) fn(loggers[name]) }
+
+/** set verbose state of all loggers */
+function setVerbose(v=true) { applyAll(l => l.setVerbose(v)) }
+
+/** set silent state of all loggers */
+function setSilent(v=true)  { applyAll(l => l.setSilent(v)) }
+
+/** set log level of all loggers */
+function setLevel(l)        { applyAll(l => l.setLevel(l)) }
+
+var logger = new Logger('')
+var {log, debug, error} = logger
+
 if (!this.module) this.module = {}
-module.exports = { Logger, typeString, objectString, LEVEL }
+module.exports = {
+    Logger, logger, setVerbose, setSilent, setLevel, getLogger,
+    typ, str, len, log, debug, error,
+    LEVEL, ELLIPS
+}
 
 
 /***/ }),
@@ -3124,28 +3306,32 @@ module.exports = { Logger, typeString, objectString, LEVEL }
 const { Gtk, Gdk, Gio } = imports.gi
 
 // setup polyfills based on Gtk version
-const poly = __webpack_require__(260).getPoly({Gtk, Gdk})
+const poly = __webpack_require__(260).getPoly()
 
 // use webpack `require` for all (local) imports
-const md2pango = __webpack_require__(396)
-const json5    = __webpack_require__(111)
-const binding  = __webpack_require__(329)
-const expr     = __webpack_require__(755)
-expr.logger.setVerbose(false)
+const md2pango   = __webpack_require__(396)
+const json5      = __webpack_require__(111)
+const binding    = __webpack_require__(329)
+const expr       = __webpack_require__(755)
+const logging    = __webpack_require__(347)
+const styling    = __webpack_require__(296)
+const system     = __webpack_require__(529)
+const dialog     = __webpack_require__(294)
+const controller = __webpack_require__(405)
 
-const logging  = __webpack_require__(347)
-const { toPath, toPathArray, fileExt, readFile } = __webpack_require__(529)
-const { gtkToNoguiResponseCode, RESPONSE_TYPE } = __webpack_require__(294)
-const { Controller } = __webpack_require__(405)
+const { toPath, toPathArray, fileExt, readFile } = system
+const { gtkToNoguiResponseCode, RESPONSE_TYPE } = dialog
+const { Controller } = controller
+const { Bindable }   = binding
 
 // styling shortcuts and functions
-const { CENTER, FILL, Options, add, css } = __webpack_require__(296)
+const { CENTER, FILL, Options, add, css } = styling
 const { V, H } = Options
 
 // setup logging
-const logger = new logging.Logger('nogui')
+const logger = logging.getLogger('nogui')
 const { log, debug } = logger
-var setVerbose = (v=true) => { logger.setVerbose(v); binding.setVerbose(v) }
+logger.connect(l => poly.log_level = l)
 
 // formatters for external content
 const defaultFormatters = {
@@ -3153,7 +3339,7 @@ const defaultFormatters = {
 }
 
 const items = (o) => Object.keys(o).map((k) => [k, o[k]])
-const typeString = logging.typeString
+const str = logging.str
 
 function loadDialogFile(file, formatter=null) {
     let text = readFile(file)
@@ -3163,11 +3349,19 @@ function loadDialogFile(file, formatter=null) {
 
 function ensureBindable(data, ...labels) {
     if (data instanceof binding.Bindable) {
-        // debug(`ensureBindable[${labels.join(', ')}](${typeString(data)})`)
+        // debug(`ensureBindable[${labels.join(', ')}](${str(data)})`)
     } else {
-        throw new Error(`[${labels.join(', ')}]data model is broken , expected Bindable, got ${typeString(data)}`)
+        throw new Error(`[${labels.join(', ')}]data model is broken , expected Bindable, got ${str(data)}`)
     }
     return data
+}
+
+function isLiteral(o) {
+    const T = typeof o
+    if (T == 'string')  return true
+    if (T == 'number')  return true
+    if (T == 'boolean') return true
+    return false
 }
 
 /** Spec defines a user interface */
@@ -3194,11 +3388,12 @@ var Builder = class Builder {
         Builder allows building a widget tree from a nogui spec.
 
         @param {Controller}  controller  - controller for the UI
+        @param {Bindable}    data        - bindable data model
         @param {Spec|string} spec        - the nogui Spec or path to the spec file
         @param {string}      path        - path prefix used for all referenced gui resources (icons, docs, etc.)
         @param {Object}      formatters  - named formatters that will be used to format text and documents
     */
-    constructor(spec, controller, path='.', data=controller, formatters=defaultFormatters) {
+    constructor(spec, controller, data, path='.', formatters=defaultFormatters) {
         this.controller = controller
         this.data = ensureBindable(data, 'builder')
         this.spec = (typeof spec == 'string')? Spec.from_path(spec) : new Spec(spec)
@@ -3210,14 +3405,14 @@ var Builder = class Builder {
         this.done = false
     }
 
-    buildWidgets() {
+    build() {
         if (this.done) throw new Error('cannot build Widget tree more than once')
-        log(`building widgets from ${this.spec} with asset path ${this.path}`)
+        log(`building widgets from ${str(this.spec)} with asset path ${this.path}`)
         this.buildIcons()
         this.buildDialogs()
         this.buildViews()
         if (this.controller != null) {
-            this.controller._add_dialogs(this.dialogs)
+            this.controller.addDialogs(this.dialogs)
         }
         this.done = true
         return this
@@ -3227,7 +3422,7 @@ var Builder = class Builder {
         const {spec, path} = this
         // allow finding icons by name
         poly.addIconPath(path)
-    
+
         this.icons = items(spec.icons).map(([k,spec]) => {
             const str = JSON.stringify(spec)
             let img
@@ -3238,7 +3433,7 @@ var Builder = class Builder {
             }
             else if (spec.file) {
                 let icon_path = toPath(path, ...toPathArray(spec.file))
-                log(`load icon: ${str} from ${icon_path}`)
+                debug(`load icon: ${str} from ${icon_path}`)
                 const gicon = Gio.FileIcon.new(Gio.File.new_for_path(icon_path))
                 opt = {gicon: gicon, use_fallback: true}
                 img = new Gtk.Image(opt)
@@ -3248,12 +3443,12 @@ var Builder = class Builder {
                 img = Gtk.Image(opt)
                 logError(new Error(`failed to load icon ${k}: ${str}`), 'using placeholder')
             } else {
-                log(`loaded icon ${k}: ${str}`)
+                debug(`loaded icon ${k}: ${str}`)
             }
             return {name:k, img, opt, spec}
         })
     }
-    
+
     buildDialogs() {
         const {spec, path, formatters, controller} = this
         // const flags = Gtk.DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL;
@@ -3298,8 +3493,8 @@ var Builder = class Builder {
             let run = (window, cb=ctlFunc) => {
                 const handleResponse = (id) => {
                     const code = gtkToNoguiResponseCode(id)
-                    log(`got dialog response gtk_code=${id} nogui_code=${code}`)
-                    if (cb) return cb(id, code)                   
+                    debug(`got dialog response gtk_code=${id} nogui_code=${code}`)
+                    if (cb) return cb(id, code)
                 }
                 poly.runDialog(createDialog(window), handleResponse)
             }
@@ -3312,7 +3507,7 @@ var Builder = class Builder {
         ensureBindable(data,'table','row')
         let rbox = css(new Gtk.Box(H), 'box {padding: 0px; margin: 0px;}')
         let icon = this.findIcon(row.icon)
-        if (icon) add(rbox, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')            
+        if (icon) add(rbox, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
         this.buildWidget(row, rbox, data)
         return rbox
     }
@@ -3320,38 +3515,59 @@ var Builder = class Builder {
     buildTable(table, data=this.data) {
         ensureBindable(data,'table')
         // TODO: use Grid
+        log(`building table: ${str(table)}`)
         let tbox = css(new Gtk.Box(V), 'box {padding: 5px;}')
         for (const i in table.table) {
             const row = table.table[i]
-            if (row.repeat) {                
-                let res = binding.parse_expr(row.repeat)
-                let fields = Object.keys(res.fields)
-                if (fields.length == 0) return
-                let f = fields[0]
+            debug(`buildTable.row: ${str(row)}`)
+            if (row.repeat) {
+                log(`building repeater: ${str(row)}`)
 
-                // keep track of what is in the table
+                /** @type {binding.Bindable[]} */
+                let added = []
                 let widgets = []
-                const onChange = (items) => {
-                    print(`recreate ${items.length} items`)
-                    for (const w of widgets) tbox.remove(w)
-                    widgets = []
-                    for (const item of items) {
-                        let b = new binding.Bindable(binding.bindAll(item), data)
-                        ensureBindable(b,'change','item')
+                let destroyed = false
+
+                let onDestroy = (w) => {
+                    // count to zero when widgets are destroyed
+                    debug(`onDestroy: widgets=${widgets.length}`)
+                    addItems()
+                }
+
+                let addItems = () => {
+                    // if all previous widgets are destroyed, lets add new ones
+                    if (widgets.length > 0 || added.length == 0 || destroyed) return
+                    debug(`addItems: len=${added.length}`)
+                    for (const b of added) {
                         let w = add(tbox, this.buildTableRow(row, b))
+                        w.connect('destroy', onDestroy)
                         widgets.push(w)
                     }
+                    added = []
                 }
-                const onPropChange = (k, v) => {
-                    // todo sync UI list with data list (change only the changed!)
-                    if (k == 'length') return  // ignore length changes
-                    if (v == null) print(`item deleted i=${k} (${typeof k})`)
-                    else           print(`item changed i=${k} (${typeof k}), v=${v} (${typeof k})`)
 
-                    // HACK: for now just recreate all rows
-                    onChange(data.getBindingValue(f))
+                let listChanged = (list) => {
+                    debug(`listChanged: len=${list.length}, destroyed=${destroyed}, widgets=${widgets.length}`)
+                    if (destroyed) return
+                    while (widgets.length > 0) try {
+                        debug(`remove widget #${widgets.length}`)
+                        let w = widgets.shift()
+                        poly.remove(w, tbox)
+                    } catch (e) {
+                        debug(`stopping listChanged on error: ${e}`)
+                        logError(e)
+                        return
+                    }
+                    added = list.map(o => binding.Bind(o, data))
+                    addItems()
                 }
-                data.bindProperty(f, onChange, onPropChange)
+
+                const { id } = data.bindExpr(row.repeat, listChanged)
+                tbox.connect('destroy', () => {
+                    debug(`tbox.destroy`)
+                    destroyed = true
+                    data.unbindExpr(id)
+                })
                 continue
             }
             add(tbox, this.buildTableRow(row, data))
@@ -3360,31 +3576,43 @@ var Builder = class Builder {
     }
 
     // returns a Separator or templated Label based on the given template `text`
-    buildText(text, data=this.data, self=null) {
+    buildText({text, data=this.data, self=null}) {
         ensureBindable(data,'text')
         if (text.match(/^(---+|===+|###+|___+)$/)) {
             return new Gtk.Separator(H)
-        } else if (text == '|') {
-            return new Gtk.Separator(V)
-        } else {
-            let l = css(new Gtk.Label({label:text}), 'label {margin-left: 5px; margin-right:5px;}')
-            let bind_id = data.bindTemplate(text, (v) => {
-                // print(`tpl updated ${text}: ${v}`)
-                l.set_label(v)
-            }, self)
-            if (bind_id != null) {
-                l.connect('unrealize', (l) => {
-                    // print(`unbinding ${text} ${bind_id}`)
-                    data.unbindTemplate(bind_id)
-                })
-            }
-            return l
         }
+        if (text == '|') {
+            return new Gtk.Separator(V)
+        }
+
+        let l = css(new Gtk.Label({label:text}), 'label {margin-left: 5px; margin-right:5px;}')
+        let id = data.bindTemplate(text, (v) => {
+            // debug(`text updated ${text}: ${v}, self=${str(self)}`)
+            // debug(`text updated data=${str(data.data)}`)
+            l.set_label(v)
+        }, self)
+        if (id != null) {
+            l.connect('destroy', (l) => {
+                // debug(`unbinding ${text} ${id}`)
+                data.unbindTemplate(id)
+            })
+        }
+        return l
     }
 
-    buildLane({icon=null, text=null, style=null, center=false, fill=false, data=this.data}={}, box_style=null) {
+    /**
+     * @param {Object}        options        - lane options
+     * @param {Object}        options.icon   - lane icon
+     * @param {string|Object} options.text   - lane text
+     * @param {string|Object} options.style  - lane text style
+     * @param {boolean}       options.center - center lane
+     * @param {boolean}       options.fill   - fill lane (H-expand text)
+     * @param {Bindable}      options.data   - data model for lane
+     * @param {Object}        options.self   - source of the lane (spec object)
+     */
+    buildLane({icon=null, text=null, style=null, center=false, fill=false, data=this.data, self=null}) {
         ensureBindable(data,'lane')
-        let lane = css(new Gtk.Box(H), box_style? `box ${box_style}` : null)
+        let lane = new Gtk.Box(H)
         let icon_style = ''
         if (text) icon_style = 'image {margin-right: 10px;}'
         if (icon) {
@@ -3396,43 +3624,52 @@ var Builder = class Builder {
         }
         if (text) {
             style = style? `label ${style}` : null
-            if (!(text instanceof Gtk.Label)) text = this.buildText(text, data)
-            add(lane, text, style)
-            if (fill) text.set_hexpand(true)
+            let l = null
+            if (text instanceof Gtk.Label) l = text
+            if (isLiteral(text))           l = this.buildText({text, data})
+            if (l == null) throw new Error(`unsupported text value: ${str(text)}`)
+            add(lane, l, style)
+            if (fill) l.set_hexpand(true)
         }
-        if (center) lane.set_halign(CENTER)        
+        if (center) lane.set_halign(CENTER)
         return lane
     }
 
-    buildAction({text=null, tooltip=null, icon=null, call=null, dialog=null, view=null, margin: padding=2, data=this.data}) {
+    buildAction({ text=null, tooltip=null, icon=null, call=null, dialog=null, view=null, margin=2,
+                  data=this.data, self=null }) {
         ensureBindable(data,'action')
         const ctl = this.controller
-        let l = this.buildLane({text, icon, center:true, data}, `{padding: ${padding}px;}`)
+        let l = css(this.buildLane({text, icon, center:true, data, self}), `box {margin: ${margin}px;}`)
         let b = css(new Gtk.Button({child:l, tooltip_text: tooltip}), `button {margin: 5px;}`)
-        b.set_tool
         if (call)   b.connect('clicked', () => ctl.callBack(call))
         if (dialog) b.connect('clicked', () => ctl.openDialog(dialog))
         if (view)   b.connect('clicked', () => ctl.showView(view))
         return b
     }
 
-    buildVis(row, w, expr, data=this.data){
+    buildVis({vis, widget, data=this.data, self=null}){
         ensureBindable(data,'vis')
-        const {comp, fields} = binding.parse_expr(expr)
-        const update = () => {
-            // print(`vis update`, JSON.stringify(data), JSON.stringify(fields), w, JSON.stringify(row))
-            if (comp(row, fields)) w.show()
-            else                   w.hide()
+
+        let destroyed = false
+        const onChange = (v) => {
+            if (destroyed) { log(`destroyed!`); return }
+            debug(`visUpdate data=${str(data.data)}`)
+            debug(`visUpdate destroyed=${destroyed}`)
+            if (v) poly.show(widget)
+            else   poly.hide(widget)
         }
 
-        // log(`setting up vis binding for ${expr}`)
+        const { id, expr } = data.bindExpr(vis, onChange, self)
 
-        for (const f in fields) {
-            const { id } = data.bindProperty(f, (v) => { fields[f] = v; update() })
-            w.connect('unrealize', (w) => data.unbindProperty(f, id))
-            fields[f] = data.getBindingValue(f)
+        let destroy = (w) => {
+            destroyed = true
+            data.unbindExpr(id)
+            debug(`visUnbind fields=${str(expr.fields)}`)
         }
-        update()
+        widget.connect('destroy', destroy)
+
+        debug(`visBind fields=${expr.fields}`)
+        onChange(expr.value)
     }
 
     buildViews() {
@@ -3450,7 +3687,7 @@ var Builder = class Builder {
         const ctl = this.controller
 
         if (typeof row == 'string') {
-            add(box, this.buildText(row, data))
+            add(box, this.buildText({text:row, data}))
             return
         }
 
@@ -3473,7 +3710,7 @@ var Builder = class Builder {
         let labels = []
         let binds = []
         let toggleImage = null
-        
+
         let icons = row.icons? row.icons : row.control? row.control.map(o => o.icon) : []
 
         if (icons && icons.length > 1) {
@@ -3491,9 +3728,9 @@ var Builder = class Builder {
         }
 
         if (images.length > 1) {
-            toggleImage = (state) => {                            
-                if (state) { images[1].show(), images[0].hide() }
-                else       { images[0].show(), images[1].hide() }
+            toggleImage = (state) => {
+                poly.toggle(images[1], state)
+                poly.toggle(images[0], !state)
             }
         }
 
@@ -3502,11 +3739,11 @@ var Builder = class Builder {
 
         if (row.title) {
             let style = '{margin: 5px; font-weight:bold;}'
-            w = add(box, this.buildLane({text:row.title, style, fill, data}))
+            w = add(box, this.buildLane({text:row.title, style, fill, data, self:row}))
         }
         else if (row.text) {
             let style = '{margin: 5px;}'
-            w = add(box, this.buildLane({text:row.text, style, fill, data}))
+            w = add(box, this.buildLane({text:row.text, style, fill, data, self:row}))
         }
         else if (row.row) {
             for (const col of row.row) this.buildWidget(col, box, data)
@@ -3526,13 +3763,11 @@ var Builder = class Builder {
                 print(`adding bind ${binds[i]}, img:${images[i]}`)
                 const icon = images[i]
                 const text = `$${binds[i]}`
-                const l = add(box, this.buildLane({
-                    text, icon, data,
-                    style:'{margin: 5px;}', center:true
-                }))
-                const onChange = (v) => v? l.show(): l.hide()
+                const style = '{margin: 5px;}'
+                const l = add(box, this.buildLane({ text, icon, data, style, center:true, self:row }))
+                const onChange = (v) => poly.toggle(l, v)
                 data.bindProperty(binds[i], onChange)
-                icon.show()
+                poly.show(icon)
                 onChange(data.getBindingValue(binds[i]))
             }
         }
@@ -3557,7 +3792,7 @@ var Builder = class Builder {
         }
         else if (row.toggle) {
             // build complex button content
-            let l = w = this.buildLane({icon, center:true, data}, '{padding: 5px;}')
+            let l = w = css(this.buildLane({icon, center:true, data, self:row}), 'box {padding: 5px;}')
             if (images && images.length > 1) {
                 add(l, images[0])
                 add(l, images[1])
@@ -3587,22 +3822,23 @@ var Builder = class Builder {
                 if (!row.call) {
                     b.connect('toggled', (b) => setter(b.get_active()))
                 }
-                b.connect('unrealize', (b) => data.unbindProperty(row.bind, id))
+                b.connect('destroy', (b) => data.unbindProperty(row.bind, id))
                 onChange(data.getBindingValue(row.bind))
             }
         }
         else if (row.switch) {
-            let box_style = '{padding: 5px; padding-left: 10px; padding-right: 10px;}'
-            let l = w = add(box, this.buildLane({icon, data}, box_style))
+            let box_style = 'box {padding: 5px; padding-left: 10px; padding-right: 10px;}'
+            let l = w = add(box, this.buildLane({icon, data, self:row}), box_style)
             if (images && images.length > 1) {
                 add(l, images[0])
                 add(l, images[1])
             }
-            let label = add(l, this.buildText(row.switch, data, row), 'label {margin-left: 10px;}')
+            let label_style = 'label {margin-left: 10px;}'
+            let label = add(l, this.buildText({text:row.switch, data, self:row}), label_style)
             label.set_hexpand(true)
             label.set_halign(Gtk.Align.START)
 
-            let sw  = add(l, new Gtk.Switch())            
+            let sw  = add(l, new Gtk.Switch())
             sw.set_halign(Gtk.Align.END)
 
             // connect bindings and either a callback or a binding setter
@@ -3617,13 +3853,13 @@ var Builder = class Builder {
                 if (!row.call) {
                     sw.connect('state-set', (sw, state) => setter(state))
                 }
-                sw.connect('unrealize', (sw) => data.unbindProperty(row.bind, id))
+                sw.connect('destroy', (sw) => data.unbindProperty(row.bind, id))
                 onChange(data.getBindingValue(row.bind))
             }
         }
 
         if (w && row.vis) {
-            this.buildVis(row, w, row.vis, data)
+            this.buildVis({vis:row.vis, widget:w, data, self:row})
         }
     }
 
@@ -3642,31 +3878,126 @@ var Builder = class Builder {
 }
 
 module.exports = {
-    Spec, Builder, Controller, setVerbose, RESPONSE_TYPE
+    Spec, Builder, Controller, RESPONSE_TYPE,
+    poly,
+    logging,
+    expr,
+    binding,
+    styling,
 }
+
 
 /***/ }),
 
 /***/ 260:
-/***/ ((module) => {
+/***/ (function(module) {
 
 // SPDX-FileCopyrightText: 2021 Uwe Jugel
 //
 // SPDX-License-Identifier: MIT
 
-function getPoly({Gtk=imports.Gtk, Gdk=imports.Gdk}={}) { var poly = {
+const { GLib } = imports.gi
+
+const PACK_START_ARGS = [
+    true,  // expand
+    false, // fill
+    1,     // padding
+]
+
+var timeouts = {
+    /** calls `func` after a `delay_ms` timeout and log potential errors */
+    setTimeout(func, delay_ms=0, ...args) {
+        return GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay_ms, () => {
+            try       { func(...args) }
+            catch (e) { logError(e) }
+            return GLib.SOURCE_REMOVE
+        })
+    },
+
+    /** wrapper to `GLib.source_remove`
+     * for removing a GLib `source` that was set with `setTimeout`.
+     * @param {object} source
+    */
+    clearTimeout(source) { return GLib.source_remove(source) },
+
+    /** returns a new `Promise` to be resolved or rejected with the result or error
+     *  produced by calling `func` after a `delay_ms` timeout
+     */
+    asyncTimeout(func, delay_ms=0, ...args) {
+        return new Promise((resolve, reject) => {
+            return timeouts.setTimeout(() => {
+                try       { resolve(func(...args)) }
+                catch (e) { reject(e) }
+            }, delay_ms)
+        })
+    }
+}
+
+if (this.setTimeout)   timeouts.setTimeout   = setTimeout    // use native setTimeout if available
+if (this.clearTimeout) timeouts.clearTimeout = clearTimeout  // use native clearTimeout if available
+
+// used for flagging Widgets as inaccessible to avoid deallocation errors
+var LOCKED = Symbol('LOCKED')
+
+var LEVEL = {
+    ERROR: 0,
+    INFO:  1,
+    DEBUG: 2,
+}
+
+var USE_GTK = null
+
+/** setup and return a polyfill object to handle different GTk versions */
+function getPoly(gtk_version=null) {
+    if (USE_GTK == null) {
+        USE_GTK = useGtk(gtk_version)
+    }
+
+    const { Gtk, Gdk } = imports.gi
+    const poly = {
+    USE_GTK,
+    LEVEL,
+    log_level: LEVEL.ERROR,
+    log:   (msg) => { if (poly.log_level >= LEVEL.INFO)  log(msg) },
+    error: (err) => { if (poly.log_level >= LEVEL.ERROR) logError(err) },
+    debug: (msg) => { if (poly.log_level >= LEVEL.DEBUG) log(msg) },
     isGtk3: () => Gtk.MAJOR_VERSION < 4,
+    get GtkVersion() { return Gtk.MAJOR_VERSION },
     append: (container, o) => {
-        if (container.append) return container.append(o)
-        // No append available, must try other ways!
-        if (container instanceof Gtk.Box) {
-            return box.pack_start(o, true, false, '1.0')
-        }
+        // TODO: check if we need smart type switch to call correct "append" on specific widget types
+        if (container.append)      return container.append(o)
+        if (container.add)         return container.add(o)
+        if (container.pack_start)  return container.pack_start(o, ...PACK_START_ARGS)
+        if (container.set_child)   return container.set_child(o)
         throw new Error(`append(widget) not implemented for ${container}`)
     },
+    remove: (w, parent=null, depth=0) => {
+        if (depth > 100) throw new Error(`too many recursive removals`)
+        if (w.foreach) {
+            let i = 0
+            w.foreach((c) => {
+                poly.debug(`LOCKING child #${i++} of ${w}`)
+                c[LOCKED] = true
+                poly.remove(c, w, depth+1)
+            })
+        }
+        if (w.get_child) {
+            poly.debug(`LOCKING single child of ${w}`)
+            let c = w.get_child()
+            c[LOCKED] = true
+            poly.remove(c, w, depth+1)
+        }
+        if (parent && parent.remove) {
+            poly.debug(`remove child ${w} from parent ${parent}`)
+            return parent.remove(w)
+        }
+    },
+    show:   (w) => { if (!w[LOCKED]) w.show() },
+    hide:   (w) => { if (!w[LOCKED]) w.hide() },
+    toggle: (w, state) => state? poly.show(w) : poly.hide(w),
     runDialog: (dia, cb=null, close=true) => {
-        dia.show()
-        dia.connect('response', (o, id) => {            
+        poly.show(dia)
+        dia.connect('response', (o, id) => {
             if (cb) cb(id)
             if (id != Gtk.ResponseType.CLOSE && close) dia.close()
         })
@@ -3681,24 +4012,48 @@ function getPoly({Gtk=imports.Gtk, Gdk=imports.Gdk}={}) { var poly = {
     },
     addIconPath: (path) => {
         const theme = poly.getTheme()
+        const len = theme.get_search_path().length
         if (theme.add_search_path)    theme.add_search_path(path)
         if (theme.append_search_path) theme.append_search_path(path)
-    }
+        return theme.get_search_path().length - len
+    },
+    ...timeouts,
 }; return poly }
 
-module.exports = { getPoly }
+function useGtk(version=null) {
+    version = version || imports.gi.GLib.getenv('USE_GTK')
+    if (version == null) return
+    log(`using GTK/Gdk/GdkX11 ${version}`)
+    if (typeof version == 'number') version = `${version}.0`
+    try {
+        imports.gi.versions.Gtk = version
+        imports.gi.versions.GdkX11 = version
+        imports.gi.versions.Gdk = version
+    } catch (e) {
+        logError(e)
+    }
+    return version
+}
+
+function gtk3() { return getPoly(3) }
+function gtk4() { return getPoly(4) }
+
+if (!this.module) this.module = {}
+module.exports = { getPoly, useGtk, gtk3, gtk4, timeouts, LOCKED }
 
 
 /***/ }),
 
 /***/ 296:
-/***/ (function(module) {
+/***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 // SPDX-FileCopyrightText: 2021 Uwe Jugel
 //
 // SPDX-License-Identifier: MIT
 
 const { Gtk } = imports.gi
+
+const poly = __webpack_require__(260).getPoly()
 
 const Options = {
     V: {orientation: Gtk.Orientation.VERTICAL},
@@ -3712,7 +4067,9 @@ const Constants = {
 
 let add = (parent, widget, ...styles) => {
     css(widget, ...styles)
-    parent.append(widget)
+    poly.append(parent, widget)
+    poly.show(widget)
+    poly.show(parent)
     return widget
 }
 

@@ -1,10 +1,10 @@
-imports.gi.versions.Gtk = '4.0'   // define which GTK version we support
+imports.gi.versions.Gtk = '4.0'        // define which GTK version we support
 const { GLib, Gtk, Gio } = imports.gi  // regular import without need for webpack
 
-const nogui = require('nogui')    // webpack import for `imports.<path>.nogui`
-nogui.setVerbose(true)            // show UI builder logs and more
+const nogui = require('nogui')   // webpack import for `imports.<path>.nogui`
+nogui.logging.setVerbose(false)  // show UI builder logs and more
 
-const { asyncTimeout } = require('./utils')  // webpack local import
+const { asyncTimeout } = nogui.poly
 
 let song_counter = 0
 
@@ -12,7 +12,7 @@ class Song {
     constructor(name, playlist_number=null) {
         if (!playlist_number) {
             playlist_number = (song_counter += 1)
-        }     
+        }
         this.name = name
         this.playlist_number = playlist_number
     }
@@ -36,12 +36,12 @@ class Model {
 }
 
 // Also our player needs some logic that works with the data.
-class AudioPlayer extends Model {
+class SongPlayer extends Model {
     async Play(ctx) {
         this.playing = true
         let stop = false
         ctx.connect(() => stop = true)
-        const play = async (num) => {
+        const playNext = async (num) => {
             if (this.songs.length == 0 || stop || num > this.songs.length) {
                 // nothing to play or must stop
                 return
@@ -49,12 +49,12 @@ class AudioPlayer extends Model {
             let song = this.song = this.songs[num - 1]
             print('playing song', song)
             // simulate playing and report progress
-            for (let i = 0; i < 1200; i++) {                
+            for (let i = 0; i < 1200; i++) {
                 await asyncTimeout(() => {}, 100)
                 if (stop) return
                 if (i%10 != 0) continue
                 let s = i/10
-                this.progress = `${Math.floor(s/600)}${Math.floor(s/60)}:${Math.floor(s%60/10)}${s%10}`                
+                this.progress = `${Math.floor(s/600)}${Math.floor(s/60)}:${Math.floor(s%60/10)}${s%10}`
             }
             return true
         }
@@ -64,21 +64,20 @@ class AudioPlayer extends Model {
                 this.next_song = 1
             }
             while (this.next_song <= this.songs.length) {
-                await play(this.next_song)
+                await playNext(this.next_song)
                 if (stop) return
                 this.next_song += 1
             }
             this.next_song = 1
-        } finally {
-            this.playing = false
-            this.song = ''
-            this.progress = ''
+        }
+        catch (e) {
+            logError(e)
         }
     }
 }
 
 // To interact with the UI we need some handlers and add trackable UI state.
-class MyAudioController extends AudioPlayer {
+class SongController extends SongPlayer {
     constructor() {
         super()
         this.view = null
@@ -86,34 +85,37 @@ class MyAudioController extends AudioPlayer {
         /** @type {Promise} prom - reusable Play promise to await end of playing */
         this.prom = null
     }
-    async playAudio() {
+    async playSong() {
         if (this.playing) return
-        if (this.ctx) this.ctx.cancel()
+        await this.stopSong()
         this.ctx = new Gio.Cancellable()
         this.prom = this.Play(this.ctx)
-        try { await this.prom; print('finished playing') }
+        try       { await this.prom; print('finished playing') }
         catch (e) { logError(e) }
+        this.playing = false
+        this.song = ''
+        this.progress = ''
         this.prom = null
     }
     async nextSong() {
         let restart = this.playing? true : false
-        if (restart) await this.stopAudio()
+        if (restart) await this.stopSong()
         if (this.next_song < this.songs.length) this.next_song += 1
         else                                    this.next_song = 1
-        if (restart) this.playAudio()
+        if (restart) this.playSong()
     }
     async prevSong() {
         let restart = this.playing? true : false
-        if (restart) await this.stopAudio()
+        if (restart) await this.stopSong()
         if (this.next_song > 1) this.next_song -= 1
         else                    this.next_song = this.songs.length
-        if (restart) this.playAudio()
+        if (restart) this.playSong()
     }
-    async stopAudio() {
+    async stopSong() {
         if (this.ctx) this.ctx.cancel()
         if (this.prom) await this.prom
     }
-    openFile()  { 
+    openFile()  {
         const s = new Song(`Song "🎶 ${this.songs.length + 1} 🎶"`)
         this.songs.push(s)
         print('added song', this.songs.slice(-1))
@@ -124,11 +126,13 @@ class MyAudioController extends AudioPlayer {
     }
 }
 
-class Player extends MyAudioController {
+/** Main audio player class with all needed controls  */
+class Player extends SongController {
     constructor(assets_dir='.', window) {
         super()
         // A `Gtk.Stack` serves as main widget to manage views.
         let stack = this.widget = new Gtk.Stack()
+        stack.show()
 
         this.forceQuit = () => window.close()
 
@@ -141,11 +145,11 @@ class Player extends MyAudioController {
             }
         })
 
-        ctl.bindProperty('songs',
+        ctl.data.bindProperty('songs',
             (v)   => { this.num_songs = this.songs.length },
             (k,v) => { this.num_songs = this.songs.length },
         )
-        ctl.bindProperty('song',
+        ctl.data.bindProperty('song',
             (v)   => { this.song_name = this.song.name },
             (k,v) => { this.song_name = this.song.name },
         )
@@ -154,8 +158,8 @@ class Player extends MyAudioController {
         let spec_file = GLib.build_filenamev([assets_dir, 'spec.js'])
 
         // A `nogui.Builder` builds the UI.
-        let ui = new nogui.Builder(spec_file, ctl, assets_dir)
-        ui.buildWidgets()
+        let ui = new nogui.Builder(spec_file, ctl, ctl.data, assets_dir)
+        ui.build()
 
         // The builder now has all `ui.views`, `ui.icons`, and `ui.dialogs`.
         // Only the views need to added to the parent controls.
@@ -167,7 +171,7 @@ class Player extends MyAudioController {
 
         // Data bindings are set up automatically, so that we can adjust
         // values and they will be reflected in the UI
-        this.muted = true  
+        this.muted = true
     }
 }
 

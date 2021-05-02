@@ -1,30 +1,30 @@
 // This file was generated from ../../README.md. Do not modify!
 // First define your UI inline in one plain JS `Object`.
-// Of course, you may also load from from JSON, YAML, or another module.
+// You can also load the `spec` from JSON, YAML, or another module.
 const spec = {
-  icons: {
-    card: { name: 'audio-card' },
-    play: { name: 'media-playback-start' },
+  icons: {                                                                // define all icons used by the app
+    card: { name: 'audio-card' },                                         // this example uses the standard
+    play: { name: 'media-playback-start' },                               // GTK icons by name and
     stop: { name: 'media-playback-stop' },
     exit: { name: 'application-exit-symbolic' },
     info: { name: "dialog-information-symbolic" },
     gears: { name: "settings-gears-symbolic" },
     back:  { name: "go-previous-symbolic" },
     vol_max: { name: 'audio-volume-high-symbolic' },
-    vol_min: { name: 'audio-volume-muted-symbolic' },    
+    vol_min: { name: 'audio-volume-muted-symbolic' },
   },
-  dialogs: {
-    about: { info: 'About Audio Player',  file: '../README.md',  icon: 'info' },
-    close: { ask:  'Close Audio Player?', call: 'respClose',     icon: 'exit' },
+  dialogs: {                                                              // Simple text-based `dialogs`
+    about: { info: 'About Audio Player',  file: '../README.md', icon: 'info' },  // with text in separate file
+    close: { ask:  'Close Audio Player?', call: 'onClose',      icon: 'exit' },  // or inline
   },
   parts: {                                                                // `parts` are reusable components
     controls: [
-      { act: 'Play', call: 'playAudio',  icon: 'play' },                  // `act` is a small unlabeled
-      { act: 'Stop', call: 'stopAudio',  icon: 'stop' },                  // button with callbacks, icons, and
+      { act: 'Play', call: 'play', icon: 'play', vis: '!playing' },       // `act` is a small unlabeled
+      { act: 'Stop', call: 'stop', icon: 'stop', vis: 'playing'  },       // button with callbacks, icons, and
     ],                                                                    // the `act` text as tooltip
   },
   views: {                                                                // apps can have multiple views
-    player: [      
+    player: [
       { title: '{{ playing? "Playing: $song" : "Next Song: $song" }}' },  // templates facilitate dynamic tex
       { use: 'controls' },                                                // just `use` the parts
       '------------------------------------------------------------',     // easy peasy separators
@@ -35,29 +35,29 @@ const spec = {
     settings: [
       { title: 'Settings', icon: 'gears' },
       { use: 'controls' },                                                // just `use` the parts again
-      '------------------------------------------------------------',      
+      '------------------------------------------------------------',
       { switch: '{{muted? "Muted" : "Not Muted"}}', bind: 'muted',        // controls can `bind` to the data
         icons: ['vol_max', 'vol_min'] },
       { act: 'Back to Player', view: 'player', icon: 'back' },            // basic view navigation with acts
     ]
   },
-  main: 'player',
+  main: 'player',                                                         // tell the app where to start
 }
 
 // OK, now we have a clean user interface as NoGui "spec".
 // Let's build some business logic for it.
 
-// To allow the app to do something, we need to define
-// some callbacks and a data model as used in the NoGui spec.
+// To allow the app to do something, we need to define some callbacks
+// and a data model that can be referenced from the spec.
 const data = {
-    muted:   false,  // nogui will setup data bindings for all fields
-    playing: false,
-    song:  'Cool Song 😎🎶'
+    playing: false,            // nogui will setup data bindings for all fields
+    muted:   false,            // you can `bind` them to your controls or
+    song:    'Cool Song 😎🎶'  // use them as `$vars` and in templates (see spec!)
 }
 const callbacks = {
-    playAudio() { data.playing = true  },  // callback for the Play button
-    stopAudio() { data.playing = false },  // callback for the Stop button
-    respClose(id, code) { if(code == 'OK') app.quit() },  // Dialog handler
+    play() { data.playing = true  },  // callback for the Play button
+    stop() { data.playing = false },  // callback for the Stop button
+    onClose(id, code) { if(code == 'OK') app.quit() },  // Close-dialog handler
 }
 
 // Now we can bring everything together into a GTK app.
@@ -67,11 +67,10 @@ const nogui = require('nogui')  // webpack import for `imports.<path>.nogui`
 const args = [imports.system.programInvocationName].concat(ARGV)
 const app = new Gtk.Application()
 app.connect('activate', (app) => {
-    let window = new Gtk.ApplicationWindow({      
-      title: '🎵 My Music', default_width: 240, application:app,
-    })
     let stack = new Gtk.Stack()  // use a Gtk.Stack to manage views
-    window.set_child(stack)
+    let window = new Gtk.ApplicationWindow({
+      title: '🎵 My Music', default_width: 240, application:app, child: stack,
+    })
     window.show()
 
     // `nogui.Controller` manages data and connects controls to the parents
@@ -86,17 +85,17 @@ app.connect('activate', (app) => {
 
     // `nogui.Builder` builds the UI and loads assets such as icons
     // and Markdown files according to the NoGui spec.
-    let ui = new nogui.Builder(spec, ctl, here)
-    ui.buildWidgets()
+    let ui = new nogui.Builder(spec, ctl, ctl.data, here)
+    ui.build()
 
     // The builder now has all `ui.views`, `ui.icons`, and `ui.dialogs`.
-    // Only the views need to added to the parent controls.
+    // Only the views need to be added to the parent controls.
     for (const v of ui.views) stack.add_named(v.widget, v.name)
 
     // The ctl.showView handler allows switching views manually
     // and is also used for view changes defined in the spec.
     ctl.showView(ui.spec.main)
 
-    data.muted = true  
+    data.muted = true
 })
 app.run(args)

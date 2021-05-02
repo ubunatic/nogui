@@ -1,6 +1,9 @@
+const { parseExpr, parseLiteral, SymParent } = require(`../src/expr`)
+const { getLogger } = require('../src/logging')
 
-const { parseExpr, SymParent, logger, parseLiteral } = require(`../src/expr`)
+const logger = getLogger('expr')
 const log = logger.log
+logger.setVerbose()
 
 const P = SymParent
 
@@ -54,12 +57,8 @@ const examples = [
 function testParse() {
     let all = []
     for (const e of examples) {
-        let parseFn = parseExpr
-        if (e.lit) {
-            e.expr = e.lit
-            parseFn = parseLiteral
-        }
-        let { tokens, expr } = parseFn(e.expr)
+        let parsed = e.lit? parseLiteral(e.lit) : parseExpr(e.expr)
+        let { expr } = parsed
         let check = () => {
             let res = expr.exec(e.data, e.self)
             if (isNaN(e.exp) && isNaN(res) || res == e.exp) {
@@ -91,6 +90,5 @@ function benchmarkExec() {
     log(`benchmark result: runs=${runs}, num_expr=${total}, per_sec=${per_sec}, expr_µs=${expr_µs}`)
 }
 
-logger.setVerbose()
 benchmarkExec()
 

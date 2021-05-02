@@ -4,6 +4,8 @@
 
 const { Gtk } = imports.gi
 
+const poly = require('./poly').getPoly()
+
 const Options = {
     V: {orientation: Gtk.Orientation.VERTICAL},
     H: {orientation: Gtk.Orientation.HORIZONTAL},
@@ -16,7 +18,9 @@ const Constants = {
 
 let add = (parent, widget, ...styles) => {
     css(widget, ...styles)
-    parent.append(widget)
+    poly.append(parent, widget)
+    poly.show(widget)
+    poly.show(parent)
     return widget
 }
 
