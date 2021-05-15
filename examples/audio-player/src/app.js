@@ -1,10 +1,5 @@
-
-const USE_GTK = imports.gi.GLib.getenv('USE_GTK')
-if (USE_GTK) imports.gi.versions.Gtk = USE_GTK
-log(`using GTK version: ${imports.gi.Gtk.get_major_version()}`)
-
 const MyAudio = require('./myaudio.js')  // webpack import for `imports.lib.myaudio`
-const poly = require('nogui').poly       // webpack import for `imports.lib.myaudio`
+const poly    = require('nogui').poly    // webpack import for `imports.lib.nogui`
 const {Gio, GLib, Gtk} = imports.gi      // regular import without need for webpack
 
 // first setup some main-file logic to locate the NoGui file and other assets
@@ -23,6 +18,7 @@ const app            = new Gtk.Application({application_id, flags})
 
 let songs = []
 let play_and_quit = false
+
 app.add_main_option('song', 'f'.charCodeAt(0), GLib.OptionFlags.IN_MAIN,
                     GLib.OptionArg.STRING_ARRAY, 'song to play', 'SONG')
 app.add_main_option('quit', 'q'.charCodeAt(0), GLib.OptionFlags.IN_MAIN,
@@ -35,12 +31,14 @@ app.connect('handle-local-options', (app, d) => {
     print('quit', play_and_quit)
     return -1
 })
+
 app.connect('activate', (app) => {
     let w = new Gtk.ApplicationWindow({application:app, ...window_opt})
+    let quit = () => w.close()
 
     // now load the actual audio player app and add its `Gtk.Widget`
-    let player = new MyAudio.Player(asset_dir, w)
-    poly.append(w, player.widget)
+    let player = new MyAudio.Player(asset_dir, w, quit)
+    poly.set_child(w, player.widget)
     w.show()
     w.connect('destroy', () => app.quit())
 

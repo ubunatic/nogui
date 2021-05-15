@@ -1,6 +1,6 @@
 .PHONY: webpack build develop test demo app ext reuse generate install uninstall help
 
-all: build test
+all: build
 
 help:
 	# targets:
@@ -19,6 +19,6 @@ help:
 	#
 	# see `make.sh` for details
 
-demo app ext reuse: build
+demo app ext reuse test: build
 
 demo app ext reuse webpack generate build develop test install uninstall: ; ./make.sh $@

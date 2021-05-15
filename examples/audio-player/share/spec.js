@@ -6,6 +6,7 @@ module.exports = {
     stop:    { name: 'media-playback-stop' },
     exit:    { name: 'application-exit-symbolic' },
     info:    { name: "dialog-information-symbolic" },
+    warn:    { name: "dialog-warning-symbolic" },
     gears:   { name: "settings-gears-symbolic" },
     back:    { name: "go-previous-symbolic" },
     prev:    { name: "go-previous-symbolic" },
@@ -32,13 +33,13 @@ module.exports = {
       { act: '', call: 'forceQuit', icon: 'exit' },
     ],
     nav: [
-      { act: 'Prev',                              call: 'prevSong',   icon: 'prev', when: 'playing'  },
-      { act: 'Play',       label: 'Play',         call: 'playSong',  icon: 'play',  vis: '!playing' },
-      { act: 'Stop',       label: 'Stop',         call: 'stopSong',  icon: 'stop',  vis: 'playing'  },
-      { act: 'Next',                              call: 'nextSong',   icon: 'next', when: 'playing'  },
-      { act: 'Open Media',                        call: 'openFile',   icon: 'open' },
-      { act: 'Playlist',   label: ' $num_songs ', view: 'playlist',   icon: 'list',  vis: 'view != @view' },
-      { act: 'Main View',                         view: 'main',       icon: 'gears', vis: 'view != @view' },
+      { act: 'Prev',                              call: 'prevSong', icon: 'prev', when: 'playing'  },
+      { act: 'Play',       label: 'Play',         call: 'playSong', icon: 'play',  vis: '!playing' },
+      { act: 'Stop',       label: 'Stop',         call: 'stopSong', icon: 'stop',  vis: 'playing'  },
+      { act: 'Next',                              call: 'nextSong', icon: 'next', when: 'playing'  },
+      { act: 'Open Media',                        call: 'openFile', icon: 'open' },
+      { act: 'Playlist',   label: ' $num_songs ', view: 'playlist', icon: 'list',  vis: 'view != @view' },
+      { act: 'Main View',                         view: 'main',     icon: 'gears', vis: 'view != @view' },
     ]
   },
   views: {
@@ -47,7 +48,8 @@ module.exports = {
       { use: 'status' },
       { use: 'nav'},
       '-----------------------------------------------------------',
-      { switch: 'Mute Audio', bind: 'muted', icons: ['vol_max', 'vol_min'] },
+      { switch: 'Mute Audio',      bind: 'muted', icons: ['vol_max', 'vol_min'] },
+      { switch: 'Log Debug Level', bind: 'debug', icons: ['info', 'warn' ] },
       { act: 'About',    dialog: 'about',  icon: 'info' },
     ],
     playlist: [

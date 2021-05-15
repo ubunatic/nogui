@@ -1,38 +1,26 @@
 #!/usr/bin/env bash
-imports=imports// exec gjs -I $(dirname $0)/../src $0 $*
+imports=imports// exec gjs -I $(dirname $0)/../../src -I $(dirname $0) $0 $*
 
-const loop = imports.mainloop
-const assert = imports.assert
-const {getPoly, useGtk, gtk3, gtk4, timeouts } = imports.poly
+/** @type {import('./gjs_testing.js')} */
+const gt = imports.gjs_testing
+const { assert, gi, system } = gt.modules
 
-let poly = null
-let gui = false
-let slow = false
-
-for (const v of ARGV) switch (v) {
-    case '3':      poly = gtk3(); assert.True(poly.isGtk3());  break
-    case '4':      poly = gtk4(); assert.False(poly.isGtk3()); break
-    case '-g':     // fallthrough
-    case '--gui':  gui = true; break
-    case '-s':     // fallthrough
-    case '--slow': slow = true; break    
+if (ARGV.length == 0) {
+    gt.usage()
+    system.exit(1)
 }
 
-if (!poly) {
-    poly = getPoly()
-    assert.NotNull(poly.GtkVersion)
-}
+const { gui, slow, prog, usage, poly } = gt.parseArgs()
+const { setTimeout, clearTimeout, asyncTimeout } = poly
+const { Gtk, Gio } = gi
+
+assert.NotNull(poly.GtkVersion)
 
 const delay = slow? 10000 : 100
-
 const str = JSON.stringify
-
-const { setTimeout, clearTimeout, asyncTimeout } = imports.poly.timeouts
 
 let src = setTimeout(() => log(`timeout`), 0)
 clearTimeout(src)
-
-const { Gtk, Gio } = imports.gi
 
 let app = gui? new Gtk.Application() : new Gio.Application()
 let quit = () => app.quit()
@@ -55,7 +43,7 @@ let start = () => {
 
     let box = new Gtk.Box()
     box.show()
-    poly.append(win, box)
+    poly.set_child(win, box)
 
     let btn = new Gtk.Button({label:'Quit'})
     btn.connect('clicked', quit)
@@ -74,7 +62,7 @@ let start = () => {
     }
     res.theme = poly.getTheme()
     res.path_diff = poly.addIconPath('.')
-    res.gui_started = true    
+    res.gui_started = true
 
     poly.runDialog(dia, handleResponse)
     setTimeout(() => dia.close(), delay)
@@ -84,6 +72,12 @@ let start = () => {
 const assertDebug = (obj) => {
     assert.NotNull(obj)
     print(obj, typeof obj, obj.constructor && obj.constructor.name)
+}
+
+if (ARGV.length == 0) {
+    imports.gjs_testing.usage()
+    usage()
+    imports.system.exit(1)
 }
 
 app.connect('activate', start)

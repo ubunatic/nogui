@@ -5,10 +5,14 @@
 // nogui transforms a non-graphical UI spec to a widget tree
 // see `assets/ui.js` to learn what features are supported.
 
-const { Gtk, Gdk, Gio } = imports.gi
-
 // setup polyfills based on Gtk version
 const poly = require('./poly').getPoly()
+
+const { Gtk, Gdk, Gio } = imports.gi
+
+// import common imports after setting up thr polyfill
+// to avoid "multiple version" warnings
+// const gi = imports.gi
 
 // use webpack `require` for all (local) imports
 const md2pango   = require('md2pango')
@@ -16,15 +20,16 @@ const json5      = require('json5')
 const binding    = require('./binding')
 const expr       = require('./expr')
 const logging    = require('./logging')
-const styling    = require('./styling.js')
-const system     = require('./system')
+const styling    = require('./styling')
+const sys        = require('./sys')
 const dialog     = require('./dialog')
 const controller = require('./controller')
+const assert     = require('./assert')
 
-const { toPath, toPathArray, fileExt, readFile } = system
+const { toPath, toPathArray, fileExt, readFile } = sys
 const { gtkToNoguiResponseCode, RESPONSE_TYPE } = dialog
 const { Controller } = controller
-const { Bindable }   = binding
+const { Binding, GetProxy, SymBinding } = binding
 
 // styling shortcuts and functions
 const { CENTER, FILL, Options, add, css } = styling
@@ -42,6 +47,7 @@ const defaultFormatters = {
 
 const items = (o) => Object.keys(o).map((k) => [k, o[k]])
 const str = logging.str
+const notNull = (o) => o != null
 
 function loadDialogFile(file, formatter=null) {
     let text = readFile(file)
@@ -49,13 +55,15 @@ function loadDialogFile(file, formatter=null) {
     return text
 }
 
-function ensureBindable(data, ...labels) {
-    if (data instanceof binding.Bindable) {
-        // debug(`ensureBindable[${labels.join(', ')}](${str(data)})`)
-    } else {
-        throw new Error(`[${labels.join(', ')}]data model is broken , expected Bindable, got ${str(data)}`)
+/** @returns {binding.Binding} */
+function getBinding(data, ...labels) {
+    if (data == null) {
+        throw new Error(`[${labels.join(', ')}] cannot get 'Binding' from null`)
     }
-    return data
+    if (data[SymBinding] instanceof Binding) {
+        return data[SymBinding]
+    }
+    throw new Error(`[${labels.join(', ')}] missing Binding for data=${str(data)}`)
 }
 
 function isLiteral(o) {
@@ -67,7 +75,7 @@ function isLiteral(o) {
 }
 
 /** Spec defines a user interface */
-var Spec = class Spec {
+class Spec {
     static from_path(p) {
         // return new Spec(eval(readFile(p)))
         let str = readFile(p)
@@ -85,19 +93,20 @@ var Spec = class Spec {
     }
 }
 
-var Builder = class Builder {
+class Builder {
     /**
         Builder allows building a widget tree from a nogui spec.
 
         @param {Controller}  controller  - controller for the UI
-        @param {Bindable}    data        - bindable data model
+        @param {Binding}     data        - bindable data model
         @param {Spec|string} spec        - the nogui Spec or path to the spec file
         @param {string}      path        - path prefix used for all referenced gui resources (icons, docs, etc.)
         @param {Object}      formatters  - named formatters that will be used to format text and documents
     */
     constructor(spec, controller, data, path='.', formatters=defaultFormatters) {
         this.controller = controller
-        this.data = ensureBindable(data, 'builder')
+        this.data = data
+        this.binding = getBinding(data, 'builder')
         this.spec = (typeof spec == 'string')? Spec.from_path(spec) : new Spec(spec)
         this.path = path
         this.formatters = formatters
@@ -145,7 +154,7 @@ var Builder = class Builder {
                 img = Gtk.Image(opt)
                 logError(new Error(`failed to load icon ${k}: ${str}`), 'using placeholder')
             } else {
-                debug(`loaded icon ${k}: ${str}`)
+                // debug(`loaded icon ${k}: ${str}`)
             }
             return {name:k, img, opt, spec}
         })
@@ -155,37 +164,71 @@ var Builder = class Builder {
         const {spec, path, formatters, controller} = this
         // const flags = Gtk.DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL;
         this.dialogs = items(spec.dialogs).map(([k,spec]) => {
-            const str = JSON.stringify(spec)
+            const src = JSON.stringify(spec)
             let fmt = (spec.fmt && formatters && formatters[spec.fmt])
             if (spec.file && formatters && fmt == null) {
                 fmt = formatters[fileExt(spec.file)] || null
             }
             let icon = this.findIcon(spec.icon)
-            let buttons = [Gtk.ButtonsType.OK]
-            let title = spec.info
-            if (spec.ask) {
-                title = spec.ask
-                buttons = [Gtk.ButtonsType.OK_CANCEL]
-            }
-            const createDialog = (window) => {
-                const w = new Gtk.Window()
-                let text = null
+
+            let text  = null
+            let texts = []
+            let title = [spec.title, spec.info, spec.ask].filter(notNull).join(' ')
+            let buttons = spec.ask? [Gtk.ButtonsType.OK_CANCEL] : [Gtk.ButtonsType.OK]
+            let show_hdr = false
+            let show_close = false
+
+            if (title == '') title = null
+
+            const loadContent = () => {
+                // create main text from files and spec (once!)
                 if (spec.file) {
                     let file = toPath(path, ...toPathArray(spec.file))
-                    text = loadDialogFile(file, fmt)
+                    texts.push(loadDialogFile(file, fmt))
                 }
+                if (spec.text) {
+                    texts.push(spec.text)
+                }
+                text = texts.join('\n')
+
+                if (text == '') {
+                    // main text is empty, let's show the title as main text
+                    // otherwise the main dialog area will look empty
+                    text = title
+                    title = null
+                }
+                show_hdr   = (text.length > 100 || title != null)
+                show_close = (spec.ask == null)  // questions must be answered!
+            }
+
+            const createDialog = (window) => {
+                if (text == null) loadContent()
+
                 const dialog = new Gtk.MessageDialog({
-                    title, text, buttons,
-                    use_markup: true,
+                    buttons,
                     modal: false,
                     transient_for: window,
                     message_type: Gtk.MessageType.OTHER,
+                    text: show_hdr? null : title,  // "text" is actually the the title of the dialog window
+                    use_markup: true,
+                    secondary_text: text + '\n',   // "secondary_text" is the main content of the window
+                    secondary_use_markup: true,
                 })
-                // make dialog movable by adding a title bar
-                const hdr = new Gtk.HeaderBar({ decoration_layout: 'icon:close' })
-                if (icon) hdr.pack_start(new Gtk.Image(icon.opt))
-                dialog.set_titlebar(hdr)
-                log(`loaded dialog ${k}: ${str}`)
+                if (show_hdr) {
+                    const hdr = new Gtk.HeaderBar({ decoration_layout: show_close? 'icon:close' : null })
+                    if (poly.isGtk3() && show_close) hdr.set_show_close_button(true)
+
+                    if (icon) hdr.pack_start(new Gtk.Image(icon.opt))
+
+                    if (title) {
+                        let l = new Gtk.Label({label:`<b>${title}</b>`, use_markup:true, visible:true})
+                        poly.set_child(hdr, l)
+                    }
+
+                    dialog.set_titlebar(hdr)
+                    hdr.show()
+                }
+                debug(`loaded dialog ${k}: ${src}`)
                 return dialog
             }
             let ctlFunc = null
@@ -200,22 +243,23 @@ var Builder = class Builder {
                 }
                 poly.runDialog(createDialog(window), handleResponse)
             }
-            log(`setup dialog ${k}: ${str}`)
+            log(`setup dialog ${k}: ${src}`)
             return { spec, name:k, run:run }
         })
     }
 
     buildTableRow(row, data=this.data) {
-        ensureBindable(data,'table','row')
+        const b = getBinding(data,'table','row')
         let rbox = css(new Gtk.Box(H), 'box {padding: 0px; margin: 0px;}')
         let icon = this.findIcon(row.icon)
         if (icon) add(rbox, new Gtk.Image(icon.opt), 'image {margin-right: 10px;}')
         this.buildWidget(row, rbox, data)
+        rbox.show()
         return rbox
     }
 
     buildTable(table, data=this.data) {
-        ensureBindable(data,'table')
+        const b = getBinding(data,'table')
         // TODO: use Grid
         log(`building table: ${str(table)}`)
         let tbox = css(new Gtk.Box(V), 'box {padding: 5px;}')
@@ -225,61 +269,57 @@ var Builder = class Builder {
             if (row.repeat) {
                 log(`building repeater: ${str(row)}`)
 
-                /** @type {binding.Bindable[]} */
+                /** @type {Binding[]} */
                 let added = []
-                let widgets = []
-                let destroyed = false
-
-                let onDestroy = (w) => {
-                    // count to zero when widgets are destroyed
-                    debug(`onDestroy: widgets=${widgets.length}`)
-                    addItems()
-                }
+                let num_widgets = 0
 
                 let addItems = () => {
-                    // if all previous widgets are destroyed, lets add new ones
-                    if (widgets.length > 0 || added.length == 0 || destroyed) return
+                    // only after all previous widgets have been destroyed, we should add new ones
+                    if (num_widgets > 0 || added.length == 0 || !tbox) return
                     debug(`addItems: len=${added.length}`)
                     for (const b of added) {
-                        let w = add(tbox, this.buildTableRow(row, b))
-                        w.connect('destroy', onDestroy)
-                        widgets.push(w)
+                        add(tbox, this.buildTableRow(row, b))
+                        num_widgets += 1
                     }
                     added = []
                 }
 
-                let listChanged = (list) => {
-                    debug(`listChanged: len=${list.length}, destroyed=${destroyed}, widgets=${widgets.length}`)
-                    if (destroyed) return
-                    while (widgets.length > 0) try {
-                        debug(`remove widget #${widgets.length}`)
-                        let w = widgets.shift()
+                let listChanged = (i, v, list) => {
+                    debug(`listChanged: len=${list.length}, destroyed=${!!tbox}, widgets=${num_widgets}`)
+                    debug(`listChanged: i=${i}, v=${v}`)
+                    if (!tbox) return
+                    while (num_widgets > 0) try {
+                        debug(`remove widget #${num_widgets}`)
+                        let w = poly.get_last_child(tbox)
                         poly.remove(w, tbox)
+                        num_widgets -= 1
                     } catch (e) {
                         debug(`stopping listChanged on error: ${e}`)
                         logError(e)
                         return
                     }
-                    added = list.map(o => binding.Bind(o, data))
+                    added = list.map(o => GetProxy(o, data))
                     addItems()
                 }
 
-                const { id } = data.bindExpr(row.repeat, listChanged)
-                tbox.connect('destroy', () => {
-                    debug(`tbox.destroy`)
-                    destroyed = true
-                    data.unbindExpr(id)
+                const { id } = b.bindObject(row.repeat, listChanged)
+                tbox.connect('unrealize', () => {
+                    debug(`buildTable: tbox.unrealize`)
+                    tbox = null
+                    b.unbind(id)
                 })
-                continue
+                // cannot add more children after a data-driven list of elements
+                break
             }
             add(tbox, this.buildTableRow(row, data))
         }
+        tbox.show()
         return tbox
     }
 
     // returns a Separator or templated Label based on the given template `text`
     buildText({text, data=this.data, self=null}) {
-        ensureBindable(data,'text')
+        const b = getBinding(data, 'text')
         if (text.match(/^(---+|===+|###+|___+)$/)) {
             return new Gtk.Separator(H)
         }
@@ -287,19 +327,19 @@ var Builder = class Builder {
             return new Gtk.Separator(V)
         }
 
-        let l = css(new Gtk.Label({label:text}), 'label {margin-left: 5px; margin-right:5px;}')
-        let id = data.bindTemplate(text, (v) => {
-            // debug(`text updated ${text}: ${v}, self=${str(self)}`)
-            // debug(`text updated data=${str(data.data)}`)
-            l.set_label(v)
+        let label = css(new Gtk.Label({label:text}), 'label {margin-left: 5px; margin-right:5px;}')
+        let { id } = b.bindTemplate(text, (v) => {
+            // debug(`text updated data=${str(data)}`)
+            if(label) label.set_label(v)
         }, self)
         if (id != null) {
-            l.connect('destroy', (l) => {
+            label.connect('unrealize', () => {
                 // debug(`unbinding ${text} ${id}`)
-                data.unbindTemplate(id)
+                label = null
+                b.unbind(id)
             })
         }
-        return l
+        return label
     }
 
     /**
@@ -313,16 +353,16 @@ var Builder = class Builder {
      * @param {Object}        options.self   - source of the lane (spec object)
      */
     buildLane({icon=null, text=null, style=null, center=false, fill=false, data=this.data, self=null}) {
-        ensureBindable(data,'lane')
+        const b = getBinding(data,'lane')
         let lane = new Gtk.Box(H)
         let icon_style = ''
         if (text) icon_style = 'image {margin-right: 10px;}'
         if (icon) {
-            if (icon instanceof Gtk.Image) {
-                add(lane, icon, icon_style)
-            } else {
-                add(lane, new Gtk.Image(icon.opt), icon_style)
+            if (!(icon instanceof Gtk.Image)) {
+                icon = new Gtk.Image(icon.opt)
             }
+            add(lane, icon, icon_style)
+            icon.show()
         }
         if (text) {
             style = style? `label ${style}` : null
@@ -332,45 +372,48 @@ var Builder = class Builder {
             if (l == null) throw new Error(`unsupported text value: ${str(text)}`)
             add(lane, l, style)
             if (fill) l.set_hexpand(true)
+            l.show()
         }
         if (center) lane.set_halign(CENTER)
+        lane.show()
         return lane
     }
 
     buildAction({ text=null, tooltip=null, icon=null, call=null, dialog=null, view=null, margin=2,
                   data=this.data, self=null }) {
-        ensureBindable(data,'action')
+        const b = getBinding(data,'action')
         const ctl = this.controller
-        let l = css(this.buildLane({text, icon, center:true, data, self}), `box {margin: ${margin}px;}`)
-        let b = css(new Gtk.Button({child:l, tooltip_text: tooltip}), `button {margin: 5px;}`)
-        if (call)   b.connect('clicked', () => ctl.callBack(call))
-        if (dialog) b.connect('clicked', () => ctl.openDialog(dialog))
-        if (view)   b.connect('clicked', () => ctl.showView(view))
-        return b
+        let l   = css(this.buildLane({text, icon, center:true, data, self}), `box {margin: ${margin}px;}`)
+        let btn = css(new Gtk.Button({child:l, tooltip_text: tooltip}), `button {margin: 5px;}`)
+        log(`buildAction ${str({call, dialog, view, text, tooltip, self})}`)
+        if (call)   btn.connect('clicked', () => ctl.callBack(call))
+        if (dialog) btn.connect('clicked', () => ctl.openDialog(dialog))
+        if (view)   btn.connect('clicked', () => ctl.showView(view))
+        btn.show()
+        return btn
     }
 
     buildVis({vis, widget, data=this.data, self=null}){
-        ensureBindable(data,'vis')
+        const b = getBinding(data,'vis')
 
-        let destroyed = false
         const onChange = (v) => {
-            if (destroyed) { log(`destroyed!`); return }
-            debug(`visUpdate data=${str(data.data)}`)
-            debug(`visUpdate destroyed=${destroyed}`)
+            if (!widget) { debug(`buildVis: widget destroyed`); return }
+            // debug(`visUpdate data=${str(data.data)}`)
+            // debug(`visUpdate destroyed=${destroyed}`)
             if (v) poly.show(widget)
             else   poly.hide(widget)
         }
 
-        const { id, expr } = data.bindExpr(vis, onChange, self)
+        const { id, expr } = b.bindExpr(vis, onChange, self)
 
-        let destroy = (w) => {
-            destroyed = true
-            data.unbindExpr(id)
-            debug(`visUnbind fields=${str(expr.fields)}`)
+        let unbind = (w) => {
+            widget = null
+            b.unbind(id)
+            // debug(`visUnbind fields=${str(expr.fields)}`)
         }
-        widget.connect('destroy', destroy)
+        widget.connect('unrealize', unbind)
 
-        debug(`visBind fields=${expr.fields}`)
+        // debug(`visBind fields=${expr.fields}`)
         onChange(expr.value)
     }
 
@@ -385,8 +428,10 @@ var Builder = class Builder {
     }
 
     buildWidget(row, box, data=this.data) {
-        ensureBindable(data,'widget')
+        const b = getBinding(data,'widget')
         const ctl = this.controller
+
+        // debug(`build: row=${str(row)}, data=${str(data)}`)
 
         if (typeof row == 'string') {
             add(box, this.buildText({text:row, data}))
@@ -411,7 +456,6 @@ var Builder = class Builder {
         let images = []
         let labels = []
         let binds = []
-        let toggleImage = null
 
         let icons = row.icons? row.icons : row.control? row.control.map(o => o.icon) : []
 
@@ -429,8 +473,10 @@ var Builder = class Builder {
             }
         }
 
-        if (images.length > 1) {
-            toggleImage = (state) => {
+        images.map(img => img.connect('unrealize', () => images = []))
+
+        const toggleImage = (state) => {
+            if(images.length > 1) {
                 poly.toggle(images[1], state)
                 poly.toggle(images[0], !state)
             }
@@ -462,15 +508,15 @@ var Builder = class Builder {
         }
         else if (row.notify) {
             for (const i in binds) {
-                print(`adding bind ${binds[i]}, img:${images[i]}`)
+                // debug(`adding bind ${binds[i]}, img:${images[i]}`)
                 const icon = images[i]
                 const text = `$${binds[i]}`
                 const style = '{margin: 5px;}'
                 const l = add(box, this.buildLane({ text, icon, data, style, center:true, self:row }))
                 const onChange = (v) => poly.toggle(l, v)
-                data.bindProperty(binds[i], onChange)
+                b.bindProperty(binds[i], onChange)
                 poly.show(icon)
-                onChange(data.getBindingValue(binds[i]))
+                onChange(b.getValue(binds[i]))
             }
         }
         else if (row.table) {
@@ -498,10 +544,10 @@ var Builder = class Builder {
             if (images && images.length > 1) {
                 add(l, images[0])
                 add(l, images[1])
-                if(toggleImage) toggleImage(false)
+                toggleImage(false)
             }
             let label = add(l, new Gtk.Label())
-            let b = add(box, new Gtk.ToggleButton({child:l}), 'button {margin: 5px;}')
+            let btn = add(box, new Gtk.ToggleButton({child:l}), 'button {margin: 5px;}')
 
             // setup label logic
             let is_off  = `${row.toggle} is OFF`
@@ -512,20 +558,27 @@ var Builder = class Builder {
             }
 
             // connect bindings and either a callback or a binding setter
-            if (row.call) b.connect('clicked', () => ctl.callBack(row.call))
-            if (row.view) b.connect('clicked', () => ctl.showView(row.view))
+            if (row.view) btn.connect('clicked', () => ctl.showView(row.view))
             if (row.bind) {
                 let onChange = (value) => {
-                    b.set_active(value? true: false)
-                    label.set_label(value? is_on : is_off)
-                    if(toggleImage) toggleImage(value)
+                    if(btn)   btn.set_active(value? true: false)
+                    if(label) label.set_label(value? is_on : is_off)
+                    toggleImage(value)
                 }
-                let {id, setter} = data.bindProperty(row.bind, onChange)
-                if (!row.call) {
-                    b.connect('toggled', (b) => setter(b.get_active()))
+                let {id, setter} = b.bindProperty(row.bind, onChange)
+                let onToggled = (btn) => {
+                    if (row.call) ctl.callBack(row.call, btn.get_active())
+                    else          setter(btn.get_active())
                 }
-                b.connect('destroy', (b) => data.unbindProperty(row.bind, id))
-                onChange(data.getBindingValue(row.bind))
+                let unbind = () => {
+                    btn = null
+                    label = null
+                    b.unbind(id)
+                }
+                btn.connect('toggled', onToggled)
+                btn.connect('unrealize', unbind)
+                label.connect('unrealize', unbind)
+                onChange(b.getValue(row.bind))
             }
         }
         else if (row.switch) {
@@ -547,18 +600,22 @@ var Builder = class Builder {
             if (row.call) sw.connect('state-set', () => ctl.callBack(row.call))
             if (row.bind) {
                 let onChange = (value) => {
-                    // label.set_label()
-                    sw.set_state(value? true : false)
+                    if(sw) sw.set_state(value? true : false)
                     if(toggleImage) toggleImage(value)
                 }
-                let {id, setter} = data.bindProperty(row.bind, onChange)
+                let {id, setter} = b.bindProperty(row.bind, onChange)
                 if (!row.call) {
-                    sw.connect('state-set', (sw, state) => setter(state))
+                    sw.connect('state-set', (_, state) => setter(state))
                 }
-                sw.connect('destroy', (sw) => data.unbindProperty(row.bind, id))
-                onChange(data.getBindingValue(row.bind))
+                sw.connect('unrealize', () => {
+                    sw = null
+                    b.unbind(id)
+                })
+                onChange(b.getValue(row.bind))
             }
         }
+
+        if (w) w.show()
 
         if (w && row.vis) {
             this.buildVis({vis:row.vis, widget:w, data, self:row})
@@ -586,4 +643,6 @@ module.exports = {
     expr,
     binding,
     styling,
+    sys,
+    assert,
 }

@@ -46,8 +46,8 @@ var len = (o) => o.length != null? o.length : Object.keys(o).length
 function defaultLogMessage(msg, labels=[], objects=[]) {
     let res = []
     if (labels  && labels.length  > 0) res.push(`[${labels.join('][')}]`)
-    res.push(msg)
-    if (objects && objects.length > 0) res.push(` ${objects.join(', ')}`)
+    if (msg !== undefined && msg !== null) res.push(msg)
+    if (objects && objects.length > 0) res.push(` ${str(...objects)}`)
     return res.join(' ')
 }
 
@@ -76,9 +76,9 @@ var Logger = class Logger {
      * @param {Object} global   - global `this` where you would access `log` implicitly, default value is `window`
      */
     constructor(name, parent=null) {
-        const info  = parent && parent.log   || _console.log   || _window.log       || _print
-        const debug = parent && parent.debug || _console.log   || _window.log       || _print
-        const error = parent && parent.error || _console.error || _window.logError  || _print
+        const info  = parent && parent.log   || _console.log   || _window.log      || _print
+        const debug = parent && parent.debug || _console.log   || _window.log      || _print
+        const error = parent && parent.error || _console.error || _window.logError || _print
         this.name = name
         this.labels = this.name? [name] : []
         this.connected = []
@@ -100,10 +100,14 @@ var Logger = class Logger {
         // setup default formatter
         this.fmt = defaultLogMessage
 
+        // prefix level label to labels
+        const labels  = (l) => [l, ...this.labels]
+        const gt      = (l) =>  this.l >= l
+
         // log functions (callable without `this`)
-        this.log   = (msg, ...objs) => { if (this.l >= INFO)  info(this.fmt(msg,  ['info',  ...this.labels], objs)) }
-        this.error = (msg, ...objs) => { if (this.l >= ERROR) error(this.fmt(msg, ['error', ...this.labels], objs)) }
-        this.debug = (msg, ...objs) => { if (this.l >= DEBUG) debug(this.fmt(msg, ['debug', ...this.labels], objs)) }
+        this.log   = (msg, ...objs)      => gt(INFO)  && info(      this.fmt(msg, labels('info'),  objs))
+        this.error = (err, msg, ...objs) => gt(ERROR) && error(err, this.fmt(msg, labels('error'), objs))
+        this.debug = (msg, ...objs)      => gt(DEBUG) && debug(     this.fmt(msg, labels('debug'), objs))
     }
 
     get level()  { return this._level }

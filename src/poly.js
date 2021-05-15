@@ -39,6 +39,45 @@ var timeouts = {
     }
 }
 
+var gtk = {
+    /** manually handle defocus to manage non-modal popups, etc. */
+    DefocusConnector(window) {
+        const Gtk = imports.gi.Gtk
+        let last_state = null
+        let F = Gtk.StateFlags
+        let Ignore = { DIR_LTR: true }
+        let callback = null
+
+        function handle(flag) {
+            // let is_active = flag & (F.ACTIVE | F.FOCUSED | F.FOCUS_VISIBLE | F.FOCUS_WITHIN | F.SELECTED | F.PRELIGHT )? 1:0
+            // let has_focus = flag & (F.FOCUS_WITHIN | F.ACTIVE)
+            let is_backdrop = flag & F.BACKDROP
+            // let pop_visible = pop.get_visible()
+            let flags = Object.keys(F).filter(k => !(k in Ignore) && (F[k] & flag) > 0).join(':')
+            let state = `${flags}+${is_backdrop}`
+
+            if (last_state == state) return
+            last_state = state
+
+            if (is_backdrop && callback != null) callback()
+        }
+
+        let connect_id = null
+        function connect(onDefocus) {
+            callback = onDefocus
+            disconnect()
+            connect_id = window.connect('state-flags-changed', (_, flag) => handle(flag))
+        }
+        function disconnect() {
+            if (connect_id == null) return
+            window.disconnect(connect_id)
+            connect_id = null
+            callback = null
+        }
+        return { connect, disconnect }
+    }
+}
+
 if (this.setTimeout)   timeouts.setTimeout   = setTimeout    // use native setTimeout if available
 if (this.clearTimeout) timeouts.clearTimeout = clearTimeout  // use native clearTimeout if available
 
@@ -69,13 +108,24 @@ function getPoly(gtk_version=null) {
     debug: (msg) => { if (poly.log_level >= LEVEL.DEBUG) log(msg) },
     isGtk3: () => Gtk.MAJOR_VERSION < 4,
     get GtkVersion() { return Gtk.MAJOR_VERSION },
+    init:   (args=null) => {
+        if (poly.isGtk3()) Gtk.init(args)
+        else               Gtk.init()
+    },
     append: (container, o) => {
         // TODO: check if we need smart type switch to call correct "append" on specific widget types
-        if (container.append)      return container.append(o)
-        if (container.add)         return container.add(o)
-        if (container.pack_start)  return container.pack_start(o, ...PACK_START_ARGS)
-        if (container.set_child)   return container.set_child(o)
+        if (container.append)           return container.append(o)
+        if (container.add)              return container.add(o)
+        if (container.pack_start)       return container.pack_start(o, ...PACK_START_ARGS)
         throw new Error(`append(widget) not implemented for ${container}`)
+    },
+    set_child: (container, o) => {
+        // TODO: check if we need smart type switch to call correct "set_child" on specific widget types
+        if (container.set_child)        return container.set_child(o)
+        if (container.set_title_widget) return container.set_title_widget(o)
+        if (container.set_custom_title) return container.set_custom_title(o)
+        if (container.add)              return container.add(o)
+        throw new Error(`set_child(widget) not implemented for ${container}`)
     },
     remove: (w, parent=null, depth=0) => {
         if (depth > 100) throw new Error(`too many recursive removals`)
@@ -101,6 +151,51 @@ function getPoly(gtk_version=null) {
     show:   (w) => { if (!w[LOCKED]) w.show() },
     hide:   (w) => { if (!w[LOCKED]) w.hide() },
     toggle: (w, state) => state? poly.show(w) : poly.hide(w),
+    set_modal: (w, v) => {
+        if (w.set_modal)    return w.set_modal(v)
+        if (w.set_autohide) return w.set_autohide(v)
+        throw new Error(`set_modal(boolean) not implemented for ${w}`)
+    },
+    set_popover: (w, pop) => {
+        if (w.set_popover)       return w.set_popover(pop)
+        if (pop.set_relative_to) return pop.set_relative_to(w)
+        throw new Error(`set_popover(widget) not implemented for ${w}`)
+    },
+    get_last_child: (w) => {
+        if (w.get_last_child) return w.get_last_child()
+        if (w.get_children) {
+            let c = w.get_children()
+            if (c.length == 0) return null
+            else               return c[c.length - 1]
+        }
+        throw new Error(`get_last_child() not implemented for ${w}`)
+    },
+    popup: (w) => {
+        if (typeof w.popdown == 'function') w.popup()
+    },
+    popdown: (w) => {
+        if (w.popdown) w.popdown()
+    },
+    getRoot: (w, gtk_class=Gtk.Window) => {
+        const match = (widget) => widget instanceof gtk_class
+        let root = match(w)? w : null
+        let p = w
+
+        while (p != null) {
+            let parent, window
+            if (p.get_parent) parent = p.get_parent()   // try to find parent
+            if (p.get_window) window = p.get_window()   // try to find parent window
+
+            // check any result is matching and set it as root and also as next parent
+            if      (match(parent))  p = root = parent
+            else if (match(window))  p = root = window
+            // or just take the next non-null as next parent without setting as root
+            else if (parent != null) p = parent
+            else if (window != null) p = parent
+            else                     break
+        }
+        return root
+    },
     runDialog: (dia, cb=null, close=true) => {
         poly.show(dia)
         dia.connect('response', (o, id) => {
@@ -108,6 +203,7 @@ function getPoly(gtk_version=null) {
             if (id != Gtk.ResponseType.CLOSE && close) dia.close()
         })
     },
+    getWindow: (w) => poly.getRoot(w, Gtk.Window),
     getDisplay: () => Gdk.Display.get_default(),
     getScreen:  () => poly.getDisplay().get_default_screen(),
     getTheme:   () => {
@@ -123,18 +219,20 @@ function getPoly(gtk_version=null) {
         if (theme.append_search_path) theme.append_search_path(path)
         return theme.get_search_path().length - len
     },
-    ...timeouts,
+    ...timeouts, ...gtk,
 }; return poly }
 
 function useGtk(version=null) {
-    version = version || imports.gi.GLib.getenv('USE_GTK')
+    let env = imports.gi.GLib.getenv('USE_GTK')
+    version = version || env
     if (version == null) return
-    log(`using GTK/Gdk/GdkX11 ${version}`)
-    if (typeof version == 'number') version = `${version}.0`
+    log(`setting GTK version from @param version=${version}, USE_GTK=${env}`)
+    if (typeof version == 'number' || version.length == 1) version = `${version}.0`
     try {
+        log(`using GTK/Gdk/GdkX11 ${version}`)
         imports.gi.versions.Gtk = version
         imports.gi.versions.GdkX11 = version
-        imports.gi.versions.Gdk = version
+        // imports.gi.versions.Gdk = version
     } catch (e) {
         logError(e)
     }

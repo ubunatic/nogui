@@ -26,6 +26,10 @@ function False(val, msg='assert.False', ...o) {
     assert(!val, msg, ...o)
 }
 
+function Fail(msg, ...o) {
+    assert(false, msg, ...o)
+}
+
 function assert(val, msg='assert', ...o) {
     if (!val) throw new Error(`${msg} ${typ(...o)}`)
 }
@@ -38,5 +42,6 @@ module.exports = {
     NotEq:   NotEq,
     True:    True,
     False:   False,
+    Fail:    Fail,
     assert:  assert,
 }
