@@ -476,8 +476,8 @@ class Builder {
 
         const toggleImage = (state) => {
             if(images.length > 1) {
-                poly.toggle(images[1], state)
-                poly.toggle(images[0], !state)
+                poly.toggle_visible(images[1], state)
+                poly.toggle_visible(images[0], !state)
             }
         }
 
@@ -512,7 +512,7 @@ class Builder {
                 const text = `$${binds[i]}`
                 const style = '{margin: 5px;}'
                 const l = add(box, this.buildLane({ text, icon, data, style, center:true, self:row }))
-                const onChange = (v) => poly.toggle(l, v)
+                const onChange = (v) => poly.toggle_visible(l, v)
                 b.bindProperty(binds[i], onChange)
                 poly.show(icon)
                 onChange(b.getValue(binds[i]))

@@ -180,8 +180,8 @@ function testBinding() {
 
     assert.Eq(data.toggle1, false)
     assert.Eq(data.toggle2, true)
-    poly.toggle(sw1)
-    poly.toggle(sw2)
+    poly.toggle_active(sw1)
+    poly.toggle_active(sw2)
     assert.Eq(data.toggle1, true)
     assert.Eq(data.toggle2, false)
 

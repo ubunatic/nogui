@@ -4043,8 +4043,8 @@ class Builder {
 
         const toggleImage = (state) => {
             if(images.length > 1) {
-                poly.toggle(images[1], state)
-                poly.toggle(images[0], !state)
+                poly.toggle_visible(images[1], state)
+                poly.toggle_visible(images[0], !state)
             }
         }
 
@@ -4079,7 +4079,7 @@ class Builder {
                 const text = `$${binds[i]}`
                 const style = '{margin: 5px;}'
                 const l = add(box, this.buildLane({ text, icon, data, style, center:true, self:row }))
-                const onChange = (v) => poly.toggle(l, v)
+                const onChange = (v) => poly.toggle_visible(l, v)
                 b.bindProperty(binds[i], onChange)
                 poly.show(icon)
                 onChange(b.getValue(binds[i]))
@@ -4403,7 +4403,8 @@ function getPoly(gtk_version=null) {
     },
     show:   (w) => { if (!w[LOCKED]) w.show() },
     hide:   (w) => { if (!w[LOCKED]) w.hide() },
-    toggle: (w, state) => state? poly.show(w) : poly.hide(w),
+    toggle_visible: (w, visible=!w.get_visible()) => visible? poly.show(w) : poly.hide(w),
+    toggle_active:  (w,  active=!w.get_active())  => w.set_active(active),
     set_modal: (w, v) => {
         if (w.set_modal)    return w.set_modal(v)
         if (w.set_autohide) return w.set_autohide(v)
@@ -4457,7 +4458,6 @@ function getPoly(gtk_version=null) {
         if (w.emit)          return w.emit('activate')
         throw new Error(`activate() not implemented for ${w}`)
     },
-    toggle: (w) => w.set_active(!w.get_active()),
     popup: (w) => {
         if (typeof w.popdown == 'function') w.popup()
     },
