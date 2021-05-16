@@ -2229,6 +2229,24 @@ function False(val, msg='assert.False', ...o) {
     assert(!val, msg, ...o)
 }
 
+function InstanceOf(val, T, msg='assert.InstanceOf', ...o) {
+    assert(val instanceof T, `${msg}, got ${typ(val)}, expected ${T}`, ...o)
+}
+
+function Match(val, expr, capt={}, msg='assert.Match', ...o) {
+    let m = `${val}`.match(expr)
+    assert(m != null, `${msg}, value ${val} does not match expr ${expr}`, ...o)
+    let errors = []
+    if (capt) for (const k in capt) {
+        let cap = capt[k]
+        let got = m[k]
+        if (got != cap) errors.push(`capture group ${k} expected "${cap}", got "${got}"`)
+    }
+    if (errors.length > 0) {
+        assert(false, `${msg} capture errors: ${errors.join(', ')}`, ...o)
+    }
+}
+
 function Fail(msg, ...o) {
     assert(false, msg, ...o)
 }
@@ -2239,14 +2257,16 @@ function assert(val, msg='assert', ...o) {
 
 if (!this.module) this.module = {}
 module.exports = {
-    Null:    Null,
-    NotNull: NotNull,
-    Eq:      Eq,
-    NotEq:   NotEq,
-    True:    True,
-    False:   False,
-    Fail:    Fail,
-    assert:  assert,
+    assert,
+    Null,
+    NotNull,
+    Eq,
+    NotEq,
+    True,
+    False,
+    Fail,
+    InstanceOf,
+    Match,
 }
 
 
@@ -2672,7 +2692,7 @@ function GetBinding(obj) {
  * binding.GetBinding(app.deep).('val', (v) => print(`deep.val=${v}`))
  *
 */
-function Bind(obj, keys=[]) {
+function Bind(obj, keys=null) {
     // Strictly disallow `null` as data source.
     // This indicates misuse of `Bind` with child-objects in setters,
     // which should be better handled with proxies.
@@ -2683,50 +2703,50 @@ function Bind(obj, keys=[]) {
     let b = GetBinding(obj)
     if (b != null) return b.proxy
 
-    if (keys.length == 0) keys = Object.keys(obj)
-
-    // Bind without property names does not make sense, since no
-    // modifications of the source object will be proxied to the data model.
-    if (keys.length == 0) throw new Error('No property names set')
+    if (keys == null) keys = Object.keys(obj)
 
     // No binding was found but keys are defined. Now let's create a data model.
     // Since we are going to overwrite setters and getters on the source `obj`,
     // we need a place to store the actual values. Thereby, the source object
     // actually becomes the implicit "proxy" for the new data model.
-    b = new Binding({})    // create an empty object with a Binding
-    const model = b.proxy  // and use its proxy as actual data model
-    // The goal is to make `obj[k] = val` also set `model[k] = val`
-    // and thereby update also notify any subscribers of the `Binding`.
+    b = new Binding({})  // create an empty object with a Binding
 
     // Convert the source object to become a proxy instead of a value store.
-    keys.forEach(k => {
-        // overwrite property getter and setter pointing to the new model
-        // the setter will also proxify and given value to make the whole
-        // property tree bindable.
-        const getter = ()  => model[k]
-        const setter = (v) => model[k] = GetProxy(v, model)
+    keys.forEach(k => AddProperty(obj, k, b))
 
-        // copy value from source obj and proxify it
-        setter(obj[k])
-
-        // augment the source object to act as a naive proxy, i.e., without
-        // support for `delete obj[key]` statements.
-        Object.defineProperty(obj, k, {
-            get: getter,
-            set: setter,
-        })
-    })
-    // Now also store the binding as Binding of the source object.
+    // Also store the binding as Binding of the source object.
     // This allow for directly subscribing to properties from the source object.
     obj[SymBinding] = b
 
     // The source object is now compatible with regular `Proxied` objects.
-    log(`Bind(${str(obj)}, keys=${str(keys)})`)
+    debug(`Bind(${str(obj)}, keys=${str(keys)})`)
 
     // Return the native `Proxy` of the data model. Using this proxy is the
     // preferred way of accessing the data instead of over the source object's
     // getters and setters.
-    return model
+    return b.proxy
+}
+
+function AddProperty(obj, k, binding=GetBinding(obj)) {
+    if (!binding) throw new Error('cannot AddProperty to non-bindable')
+    const model = binding.proxy
+
+    // The goal is to make `obj[k] = val` also set `model[k] = val`
+    // and thereby notify any subscribers of the `Binding` to `k`.
+    // overwrite property getter and setter pointing to the new model
+    // the setter will also proxify any given value to make the whole
+    // property tree bindable.
+    const getter = ()  => model[k]
+    const setter = (v) => model[k] = GetProxy(v, model)
+
+    setter(obj[k])  // copy property value and proxify through the setter
+
+    // augment the source object to act as a naive proxy, i.e., without
+    // support for `delete obj[key]` statements.
+    Object.defineProperty(obj, k, {
+        get: getter,
+        set: setter,
+    })
 }
 
 /** @param {Proxied} obj */
@@ -2788,7 +2808,7 @@ function bindExpr(s, data=null, self=null) {
     return { get value() { return expr.exec(data, self) }, fields }
 }
 
-module.exports = { Bind, Unbind, GetProxy, GetBinding, Binding, bindExpr, bindTpl, SymBinding }
+module.exports = { Bind, AddProperty, Unbind, GetProxy, GetBinding, Binding, bindExpr, bindTpl, SymBinding }
 
 
 /***/ }),
@@ -3580,7 +3600,10 @@ function getLogger(name) {
 function applyAll(fn) { for (const name in loggers) fn(loggers[name]) }
 
 /** set verbose state of all loggers */
-function setVerbose(v=true) { applyAll(l => l.setVerbose(v)) }
+function setVerbose(v=true) {
+    applyAll(l => l.setVerbose(v))
+    if (v) log(`setting all loggers to verbose logging level`)
+}
 
 /** set silent state of all loggers */
 function setSilent(v=true)  { applyAll(l => l.setSilent(v)) }
@@ -3632,7 +3655,6 @@ const dialog     = __webpack_require__(294)
 const controller = __webpack_require__(405)
 const assert     = __webpack_require__(99)
 
-const { toPath, toPathArray, fileExt, readFile } = sys
 const { gtkToNoguiResponseCode, RESPONSE_TYPE } = dialog
 const { Controller } = controller
 const { Binding, GetProxy, SymBinding } = binding
@@ -3656,7 +3678,7 @@ const str = logging.str
 const notNull = (o) => o != null
 
 function loadDialogFile(file, formatter=null) {
-    let text = readFile(file)
+    let text = sys.readFile(file)
     if (formatter != null) text = formatter.format(text)
     return text
 }
@@ -3683,8 +3705,8 @@ function isLiteral(o) {
 /** Spec defines a user interface */
 class Spec {
     static from_path(p) {
-        // return new Spec(eval(readFile(p)))
-        let str = readFile(p)
+        // return new Spec(eval(sys.readFile(p)))
+        let str = sys.readFile(p)
         if (p.endsWith('.js')) str = str.replace(/^module\.exports = \{$/m, '{')
         return new Spec(json5.parse(str))
     }
@@ -3749,7 +3771,7 @@ class Builder {
                 img = new Gtk.Image(opt)
             }
             else if (spec.file) {
-                let icon_path = toPath(path, ...toPathArray(spec.file))
+                let icon_path = sys.toPath(path, ...sys.toPathArray(spec.file))
                 debug(`load icon: ${str} from ${icon_path}`)
                 const gicon = Gio.FileIcon.new(Gio.File.new_for_path(icon_path))
                 opt = {gicon: gicon, use_fallback: true}
@@ -3773,7 +3795,7 @@ class Builder {
             const src = JSON.stringify(spec)
             let fmt = (spec.fmt && formatters && formatters[spec.fmt])
             if (spec.file && formatters && fmt == null) {
-                fmt = formatters[fileExt(spec.file)] || null
+                fmt = formatters[sys.fileExt(spec.file)] || null
             }
             let icon = this.findIcon(spec.icon)
 
@@ -3789,7 +3811,7 @@ class Builder {
             const loadContent = () => {
                 // create main text from files and spec (once!)
                 if (spec.file) {
-                    let file = toPath(path, ...toPathArray(spec.file))
+                    let file = sys.toPath(path, ...sys.toPathArray(spec.file))
                     texts.push(loadDialogFile(file, fmt))
                 }
                 if (spec.text) {
@@ -4242,8 +4264,34 @@ class Builder {
     }
 }
 
+let ReservedProperties = []
+
+const isReservedProperty     = (k) => ReservedProperties.indexOf(k) >=  0
+const isNoneReservedProperty = (k) => ReservedProperties.indexOf(k) == -1
+
+/**
+ * convenience class to manage model properties and access them
+ * directly through `this.prop`
+*/
+class Model {
+    constructor(keys=[]) {
+        binding.Bind(this, keys)
+    }
+    get binding()       { return     binding.GetBinding(this)      }
+    addProperty(k)      {            binding.AddProperty(this, k)  }
+    addProperties(...k) { k.map(k => binding.AddProperty(this, k)) }
+    initProperties() {
+        const keys = Object.keys(this).filter(isNoneReservedProperty)
+        if (keys.length == 0) return
+        log(`Model.initProperties keys={${keys.join(', ')}}`)
+        this.addProperties(...keys)
+    }
+}
+
+ReservedProperties = Object.keys(new Model())
+
 module.exports = {
-    Spec, Builder, Controller, RESPONSE_TYPE,
+    Spec, Builder, Controller, Model, RESPONSE_TYPE,
     poly,
     logging,
     expr,
@@ -4369,9 +4417,15 @@ function getPoly(gtk_version=null) {
     debug: (msg) => { if (poly.log_level >= LEVEL.DEBUG) log(msg) },
     isGtk3: () => Gtk.MAJOR_VERSION < 4,
     get GtkVersion() { return Gtk.MAJOR_VERSION },
-    init:   (args=null) => {
+    init:  (args=null) => {
         if (poly.isGtk3()) Gtk.init(args)
         else               Gtk.init()
+    },
+    initialized: false,
+    safeInit: (args=null) => {
+        if (poly.initialized) return
+        poly.init(args)
+        poly.initialized = true
     },
     append: (container, o) => {
         // TODO: check if we need smart type switch to call correct "append" on specific widget types
@@ -4431,6 +4485,41 @@ function getPoly(gtk_version=null) {
         }
         throw new Error(`get_last_child() not implemented for ${w}`)
     },
+    get_first_child: (w) => {
+        if (w.get_first_child) return w.get_first_child()
+        if (w.get_children) {
+            let c = w.get_children()
+            if (c.length == 0) return null
+            else               return c[0]
+        }
+        throw new Error(`get_first_child() not implemented for ${w}`)
+    },
+    get_child: (w, pos=0) => {
+        if (w.get_children) {
+            let c = w.get_children()
+            if (c.length <= pos) return null
+            else                 return c[pos]
+        }
+        if (w.get_next_sibling) {
+            let c = poly.get_first_child(w)
+            let i = 0
+            while (c != null && i < pos) { c = c.get_next_sibling(); i++ }
+            return c
+        }
+        throw new Error(`get_child() not implemented for ${w}`)
+    },
+    click: (w) => {
+        if (w.clicked)       return w.clicked()
+        if (w.emit)          return w.emit('clicked')
+        // if (w.activate)      return w.activate()
+        throw new Error(`click() not implemented for ${w}`)
+    },
+    activate: (w) => {
+        if (w.activate)      return w.activate()
+        if (w.emit)          return w.emit('activate')
+        throw new Error(`activate() not implemented for ${w}`)
+    },
+    toggle: (w) => w.set_active(!w.get_active()),
     popup: (w) => {
         if (typeof w.popdown == 'function') w.popup()
     },
@@ -4568,7 +4657,7 @@ module.exports = { add, css, Options, ...Constants }
 const { GLib, } = imports.gi
 const ByteArray = imports.byteArray
 
-/** converts path elements `...s` to an OS-specific path string
+/** converts path elements to an OS-specific path string
  * @returns {string} OS-specific path string
 */
 var toPath = (...s) => GLib.build_filenamev(s)
@@ -4585,7 +4674,7 @@ var toPathArray = (path) => (typeof path == 'string')? [path] : path
  * @param {string|Array} file  file path as string or Array
  * @returns {string}           extension of the file
 */
-var fileExt = (file) => GLib.build_filenamev(toPathArray(file)).split('.').pop()
+var fileExt = (file) => basename(toPathArray(file)).split('.').pop()
 
 /**
  * @param {string} path  the file name of the file to read
@@ -4593,8 +4682,26 @@ var fileExt = (file) => GLib.build_filenamev(toPathArray(file)).split('.').pop()
  */
 var readFile = (path) => ByteArray.toString(GLib.file_get_contents(path)[1])
 
+/** converts string of path Array to a path string
+ * @param   {string|Array} path  file path as string or Array
+ * @returns {string}             file path as string
+*/
+var makePath = (path) => (typeof path == 'string')? path : toPath(...path)
+
+/**
+ * @param {string} path  the file path to get the dirname from
+ * @returns {string}     the dirname of the path
+*/
+var dirname = (path) => GLib.path_get_dirname(makePath(path))
+
+/**
+* @param {string} path  the file path to get the basename from
+* @returns {string}     the basename of the path
+*/
+var basename = (path) => GLib.path_get_basename(makePath(path))
+
 if (!this.module) this.module = {}
-module.exports = { toPath, toPathArray, fileExt, readFile }
+module.exports = { toPath, toPathArray, fileExt, readFile, makePath, dirname, basename }
 
 
 /***/ }),

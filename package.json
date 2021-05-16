@@ -1,6 +1,6 @@
 {
   "name": "nogui",
-  "version": "1.0.40",
+  "version": "1.0.41",
   "description": "Render GTK controls from NoGui Spec",
   "main": "src/nogui.js",
   "scripts": {
