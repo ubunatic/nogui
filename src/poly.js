@@ -108,9 +108,15 @@ function getPoly(gtk_version=null) {
     debug: (msg) => { if (poly.log_level >= LEVEL.DEBUG) log(msg) },
     isGtk3: () => Gtk.MAJOR_VERSION < 4,
     get GtkVersion() { return Gtk.MAJOR_VERSION },
-    init:   (args=null) => {
+    init:  (args=null) => {
         if (poly.isGtk3()) Gtk.init(args)
         else               Gtk.init()
+    },
+    initialized: false,
+    safeInit: (args=null) => {
+        if (poly.initialized) return
+        poly.init(args)
+        poly.initialized = true
     },
     append: (container, o) => {
         // TODO: check if we need smart type switch to call correct "append" on specific widget types
@@ -170,6 +176,41 @@ function getPoly(gtk_version=null) {
         }
         throw new Error(`get_last_child() not implemented for ${w}`)
     },
+    get_first_child: (w) => {
+        if (w.get_first_child) return w.get_first_child()
+        if (w.get_children) {
+            let c = w.get_children()
+            if (c.length == 0) return null
+            else               return c[0]
+        }
+        throw new Error(`get_first_child() not implemented for ${w}`)
+    },
+    get_child: (w, pos=0) => {
+        if (w.get_children) {
+            let c = w.get_children()
+            if (c.length <= pos) return null
+            else                 return c[pos]
+        }
+        if (w.get_next_sibling) {
+            let c = poly.get_first_child(w)
+            let i = 0
+            while (c != null && i < pos) { c = c.get_next_sibling(); i++ }
+            return c
+        }
+        throw new Error(`get_child() not implemented for ${w}`)
+    },
+    click: (w) => {
+        if (w.clicked)       return w.clicked()
+        if (w.emit)          return w.emit('clicked')
+        // if (w.activate)      return w.activate()
+        throw new Error(`click() not implemented for ${w}`)
+    },
+    activate: (w) => {
+        if (w.activate)      return w.activate()
+        if (w.emit)          return w.emit('activate')
+        throw new Error(`activate() not implemented for ${w}`)
+    },
+    toggle: (w) => w.set_active(!w.get_active()),
     popup: (w) => {
         if (typeof w.popdown == 'function') w.popup()
     },
