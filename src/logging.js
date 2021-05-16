@@ -140,7 +140,10 @@ function getLogger(name) {
 function applyAll(fn) { for (const name in loggers) fn(loggers[name]) }
 
 /** set verbose state of all loggers */
-function setVerbose(v=true) { applyAll(l => l.setVerbose(v)) }
+function setVerbose(v=true) {
+    applyAll(l => l.setVerbose(v))
+    if (v) log(`setting all loggers to verbose logging level`)
+}
 
 /** set silent state of all loggers */
 function setSilent(v=true)  { applyAll(l => l.setSilent(v)) }
