@@ -45,7 +45,7 @@ const defaultFormatters = {
 }
 
 const items = (o) => Object.keys(o).map((k) => [k, o[k]])
-const str = logging.str
+const { str, typ } = logging
 const notNull = (o) => o != null
 
 function loadDialogFile(file, formatter=null) {
@@ -395,7 +395,12 @@ class Builder {
     buildVis({vis, widget, data=this.data, self=null}){
         const b = getBinding(data,'vis')
 
+        // const vislog   = (msg) => log(`buildVis:${msg} vis=${vis}, w=${typ(widget)}`)
+        // const visdebug = vis.match(/show[A-Z].*/)
+        // vislog('setup')
+
         const onChange = (v) => {
+            // if (visdebug) vislog(`onChange(${v})`)
             if (!widget) { debug(`buildVis: widget destroyed`); return }
             // debug(`visUpdate data=${str(data.data)}`)
             // debug(`visUpdate destroyed=${destroyed}`)
@@ -412,7 +417,7 @@ class Builder {
         }
         widget.connect('unrealize', unbind)
 
-        // debug(`visBind fields=${expr.fields}`)
+        // if (visdebug) vislog(`fields=${expr.fields}`)
         onChange(expr.value)
     }
 
@@ -494,6 +499,7 @@ class Builder {
         }
         else if (row.row) {
             for (const col of row.row) this.buildWidget(col, box, data)
+            w = box
         }
         else if (row.hfill && typeof row.hfill == 'number') {
             let margin = 15 * row.hfill
@@ -614,7 +620,7 @@ class Builder {
             }
         }
 
-        if (w) w.show()
+        if (w) w.show()  // make widgets visible by default (GTK4-style)
 
         if (w && row.vis) {
             this.buildVis({vis:row.vis, widget:w, data, self:row})
