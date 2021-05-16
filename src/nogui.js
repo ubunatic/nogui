@@ -26,7 +26,6 @@ const dialog     = require('./dialog')
 const controller = require('./controller')
 const assert     = require('./assert')
 
-const { toPath, toPathArray, fileExt, readFile } = sys
 const { gtkToNoguiResponseCode, RESPONSE_TYPE } = dialog
 const { Controller } = controller
 const { Binding, GetProxy, SymBinding } = binding
@@ -50,7 +49,7 @@ const str = logging.str
 const notNull = (o) => o != null
 
 function loadDialogFile(file, formatter=null) {
-    let text = readFile(file)
+    let text = sys.readFile(file)
     if (formatter != null) text = formatter.format(text)
     return text
 }
@@ -77,8 +76,8 @@ function isLiteral(o) {
 /** Spec defines a user interface */
 class Spec {
     static from_path(p) {
-        // return new Spec(eval(readFile(p)))
-        let str = readFile(p)
+        // return new Spec(eval(sys.readFile(p)))
+        let str = sys.readFile(p)
         if (p.endsWith('.js')) str = str.replace(/^module\.exports = \{$/m, '{')
         return new Spec(json5.parse(str))
     }
@@ -143,7 +142,7 @@ class Builder {
                 img = new Gtk.Image(opt)
             }
             else if (spec.file) {
-                let icon_path = toPath(path, ...toPathArray(spec.file))
+                let icon_path = sys.toPath(path, ...sys.toPathArray(spec.file))
                 debug(`load icon: ${str} from ${icon_path}`)
                 const gicon = Gio.FileIcon.new(Gio.File.new_for_path(icon_path))
                 opt = {gicon: gicon, use_fallback: true}
@@ -167,7 +166,7 @@ class Builder {
             const src = JSON.stringify(spec)
             let fmt = (spec.fmt && formatters && formatters[spec.fmt])
             if (spec.file && formatters && fmt == null) {
-                fmt = formatters[fileExt(spec.file)] || null
+                fmt = formatters[sys.fileExt(spec.file)] || null
             }
             let icon = this.findIcon(spec.icon)
 
@@ -183,7 +182,7 @@ class Builder {
             const loadContent = () => {
                 // create main text from files and spec (once!)
                 if (spec.file) {
-                    let file = toPath(path, ...toPathArray(spec.file))
+                    let file = sys.toPath(path, ...sys.toPathArray(spec.file))
                     texts.push(loadDialogFile(file, fmt))
                 }
                 if (spec.text) {
@@ -636,8 +635,34 @@ class Builder {
     }
 }
 
+let ReservedProperties = []
+
+const isReservedProperty     = (k) => ReservedProperties.indexOf(k) >=  0
+const isNoneReservedProperty = (k) => ReservedProperties.indexOf(k) == -1
+
+/**
+ * convenience class to manage model properties and access them
+ * directly through `this.prop`
+*/
+class Model {
+    constructor(keys=[]) {
+        binding.Bind(this, keys)
+    }
+    get binding()       { return     binding.GetBinding(this)      }
+    addProperty(k)      {            binding.AddProperty(this, k)  }
+    addProperties(...k) { k.map(k => binding.AddProperty(this, k)) }
+    initProperties() {
+        const keys = Object.keys(this).filter(isNoneReservedProperty)
+        if (keys.length == 0) return
+        log(`Model.initProperties keys={${keys.join(', ')}}`)
+        this.addProperties(...keys)
+    }
+}
+
+ReservedProperties = Object.keys(new Model())
+
 module.exports = {
-    Spec, Builder, Controller, RESPONSE_TYPE,
+    Spec, Builder, Controller, Model, RESPONSE_TYPE,
     poly,
     logging,
     expr,
