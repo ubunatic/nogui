@@ -415,7 +415,7 @@ function GetBinding(obj) {
  * binding.GetBinding(app.deep).('val', (v) => print(`deep.val=${v}`))
  *
 */
-function Bind(obj, keys=[]) {
+function Bind(obj, keys=null) {
     // Strictly disallow `null` as data source.
     // This indicates misuse of `Bind` with child-objects in setters,
     // which should be better handled with proxies.
@@ -426,50 +426,50 @@ function Bind(obj, keys=[]) {
     let b = GetBinding(obj)
     if (b != null) return b.proxy
 
-    if (keys.length == 0) keys = Object.keys(obj)
-
-    // Bind without property names does not make sense, since no
-    // modifications of the source object will be proxied to the data model.
-    if (keys.length == 0) throw new Error('No property names set')
+    if (keys == null) keys = Object.keys(obj)
 
     // No binding was found but keys are defined. Now let's create a data model.
     // Since we are going to overwrite setters and getters on the source `obj`,
     // we need a place to store the actual values. Thereby, the source object
     // actually becomes the implicit "proxy" for the new data model.
-    b = new Binding({})    // create an empty object with a Binding
-    const model = b.proxy  // and use its proxy as actual data model
-    // The goal is to make `obj[k] = val` also set `model[k] = val`
-    // and thereby update also notify any subscribers of the `Binding`.
+    b = new Binding({})  // create an empty object with a Binding
 
     // Convert the source object to become a proxy instead of a value store.
-    keys.forEach(k => {
-        // overwrite property getter and setter pointing to the new model
-        // the setter will also proxify and given value to make the whole
-        // property tree bindable.
-        const getter = ()  => model[k]
-        const setter = (v) => model[k] = GetProxy(v, model)
+    keys.forEach(k => AddProperty(obj, k, b))
 
-        // copy value from source obj and proxify it
-        setter(obj[k])
-
-        // augment the source object to act as a naive proxy, i.e., without
-        // support for `delete obj[key]` statements.
-        Object.defineProperty(obj, k, {
-            get: getter,
-            set: setter,
-        })
-    })
-    // Now also store the binding as Binding of the source object.
+    // Also store the binding as Binding of the source object.
     // This allow for directly subscribing to properties from the source object.
     obj[SymBinding] = b
 
     // The source object is now compatible with regular `Proxied` objects.
-    log(`Bind(${str(obj)}, keys=${str(keys)})`)
+    debug(`Bind(${str(obj)}, keys=${str(keys)})`)
 
     // Return the native `Proxy` of the data model. Using this proxy is the
     // preferred way of accessing the data instead of over the source object's
     // getters and setters.
-    return model
+    return b.proxy
+}
+
+function AddProperty(obj, k, binding=GetBinding(obj)) {
+    if (!binding) throw new Error('cannot AddProperty to non-bindable')
+    const model = binding.proxy
+
+    // The goal is to make `obj[k] = val` also set `model[k] = val`
+    // and thereby notify any subscribers of the `Binding` to `k`.
+    // overwrite property getter and setter pointing to the new model
+    // the setter will also proxify any given value to make the whole
+    // property tree bindable.
+    const getter = ()  => model[k]
+    const setter = (v) => model[k] = GetProxy(v, model)
+
+    setter(obj[k])  // copy property value and proxify through the setter
+
+    // augment the source object to act as a naive proxy, i.e., without
+    // support for `delete obj[key]` statements.
+    Object.defineProperty(obj, k, {
+        get: getter,
+        set: setter,
+    })
 }
 
 /** @param {Proxied} obj */
@@ -531,4 +531,4 @@ function bindExpr(s, data=null, self=null) {
     return { get value() { return expr.exec(data, self) }, fields }
 }
 
-module.exports = { Bind, Unbind, GetProxy, GetBinding, Binding, bindExpr, bindTpl, SymBinding }
+module.exports = { Bind, AddProperty, Unbind, GetProxy, GetBinding, Binding, bindExpr, bindTpl, SymBinding }
