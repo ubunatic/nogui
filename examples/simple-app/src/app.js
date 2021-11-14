@@ -1,4 +1,3 @@
-// This file was generated from ../../README.md. Do not modify!
 // First define your UI inline in one plain JS `Object`.
 // You can also load the `spec` from JSON, YAML, or another module.
 const spec = {
@@ -104,7 +103,7 @@ app.connect('activate', (app) => {
 
     // The custom `showView` handler can be used for switching `views`
     // manually in the custom parent control, i.e., the `stack` in this case.
-    // The handler is also used for 'view:<view_name>' actions in the spec.s
+    // The handler is also used for 'view:<view_name>' actions in the spec.
     ctl.showView(ui.spec.main)
     // A "view" is actually just a separate `Gtk.Widget` tree that can be
     // managed in any `Gtk.Widget`. NoGui does not make any assumptions here.

@@ -14,7 +14,7 @@ const opt = {
         'system': 'imports.system',
         'gi': 'imports.gi',
         'gi/gtk': 'imports.gi.Gtk',
-        'gi/atk': 'imports.gi.Atk',    
+        'gi/atk': 'imports.gi.Atk',
         'gi/gdk': 'imports.gi.Gdk',
         'gi/gobject': 'imports.gi.GObject',
         'gi/gio': 'imports.gi.Gio',
@@ -29,7 +29,6 @@ const opt = {
         'ui/popupMenu': 'imports.ui.popupMenu',
         'ui/panelMenu': 'imports.ui.panelMenu',
         'misc/config': 'imports.misc.config',
-        'me': 'imports.misc.extensionUtils.getCurrentExtension()',
     },
 }
 
@@ -40,7 +39,7 @@ module.exports = [
     {
         // Build the Desktop App.
         // This will put all npm-based dependencies in one file
-        // to make it GJS compatible and avoid searchPath modifications.        
+        // to make it GJS compatible and avoid searchPath modifications.
         entry: { nogui_audio_player: path(src, 'app.js') },
         output: {
             filename: 'audio-player.app.js',
@@ -51,7 +50,6 @@ module.exports = [
     },
     {
         // Build the myaudio as GJS-compatible library.
-        // This can be used by the Gnome-Extension via Me.imports.myaudio.
         entry: { myaudio: path(src, 'myaudio.js') },
         output: {
             filename: 'myaudio.js',
@@ -60,17 +58,4 @@ module.exports = [
         },
         ...opt,
     },
-    {
-        // Build the myaudio as GJS-compatible library.
-        // This can be used by the Gnome-Extension via Me.imports.myaudio.
-        entry: {
-            myaudio: path(src, 'extension.js')
-        },
-        output: {
-            filename: 'extension.min.js',
-            path: dist,
-            libraryTarget: 'this',
-        },
-        ...opt,
-    }     
 ]

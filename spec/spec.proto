@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package nogui.spec;
+
+import "google/protobuf/any.proto";
+
+message Spec {
+    map<string, Icon> icons = 10;
+    map<string, Dialog> dialogs = 11;
+    map<string, google.protobuf.Any> parts = 12;
+    map<string, google.protobuf.Any> views = 13;
+
+    // name of the main view
+    string main = 20;
+}
+
+message Icon {
+    // name of the icon (describing a preinstalled system icon)
+    string name = 1;
+}
+
+message Dialog {
+    // type defines the type of dialog
+    oneof type {
+        // info title message for info dialogs
+        string info = 1;
+        // question for ask dialogs
+        string ask = 2;
+    }
+
+    // path to a file path containing detailed content for the dialog
+    string file = 5;
+
+    // function to be called on dialog close or confirmation
+    string call = 11;
+
+    // an icon to show in the header of the dialog
+    string icon = 20;
+}
+
+message Text {
+    oneof type {
+        // text or expression to define the shown text
+        string text = 1;
+        // text or expression to define the shown title text
+        string title = 2;
+    }
+
+    // binding expression for controlling visibility of this widget
+    string vis = 3;
+}
+
+message Action {
+    oneof type {
+        // name of the short action used as tooltip
+        string act = 1;
+        // long name of the action shown as text
+        string action = 2;
+    }
+
+    // icon of the action widget
+    string icon = 3;
+    // binding expression for controlling visibility of this action
+    string vis = 4;
+
+    // view to switch to when action is triggered
+    string view = 5;
+    // function to be called when action is triggered
+    string call = 6;
+    // dialog to be shown when action is triggered
+    string dialog = 7;
+
+}
+
+// single usage of a referenced part
+message Use {
+    // part to be used
+    string use = 1;
+}
+
+message Repeat {
+    // list data reference for each of which a part should be shown
+    string repeat = 1;
+
+    oneof type {
+        // Item to be used
+        google.protobuf.Any item = 2;
+        string use = 3;
+    }
+}
+
+message Switch {
+    // label of the switch
+    string switch = 1;
+
+    // data expression of function to bind to the switch
+    string bind = 2;
+
+    // two icons to indicate if switch is on or off
+    repeated string icons = 3;
+}
+
+// titled repeater of referenced part
+message Table {
+    // item repeater of the table
+    Repeat table = 1;
+
+    // title string or expression
+    string title = 2;
+}

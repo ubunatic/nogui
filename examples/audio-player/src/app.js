@@ -12,7 +12,7 @@ const asset_dir = GLib.build_filenamev([here, '..', 'share'])
 
 // then define some meta data, config, create an app
 const application_id = 'com.github.ubunatic.noguiMyAudio'
-const window_opt     = {title: 'MyAudio App', default_width: 240}
+const window_opt     = {title: 'MyAudio App', default_width: 360, default_height: 300}
 const flags          = Gio.ApplicationFlags.FLAGS_NONE  // allow any kind of argument
 const app            = new Gtk.Application({application_id, flags})
 
@@ -34,7 +34,8 @@ app.connect('handle-local-options', (app, d) => {
 
 app.connect('activate', (app) => {
     let w = new Gtk.ApplicationWindow({application:app, ...window_opt})
-    let quit = () => w.close()
+    let quit           = () => { w.close(); app.quit() }
+    let onPlayFinished = () => { if (play_and_quit) quit() }
 
     // now load the actual audio player app and add its `Gtk.Widget`
     let player = new MyAudio.Player(asset_dir, w, quit)
@@ -43,13 +44,9 @@ app.connect('activate', (app) => {
     w.connect('destroy', () => app.quit())
 
     // finally start to do something with the app
-    if (songs.length > 0) player.songs = songs
-    player.playSong()
-    if (play_and_quit) {
-        print('quit')
-        w.close()
-        app.quit()
-    }
+    if (songs.length > 0) player.loadSongs(songs)
+
+    player.playSong().then(onPlayFinished).catch(logError)
 })
 
 app.run(args)

@@ -154,10 +154,14 @@ function getPoly(gtk_version=null) {
             return parent.remove(w)
         }
     },
-    show:   (w) => { if (!w[LOCKED]) w.show() },
-    hide:   (w) => { if (!w[LOCKED]) w.hide() },
-    toggle_visible: (w, visible=!w.get_visible()) => visible? poly.show(w) : poly.hide(w),
-    toggle_active:  (w,  active=!w.get_active())  => w.set_active(active),
+    show: (w) => { if (!w[LOCKED]) w.show() },
+    hide: (w) => { if (!w[LOCKED]) w.hide() },
+    toggle_visible: (w, visible=!w.get_visible()) => {
+        visible? poly.show(w) : poly.hide(w)
+    },
+    toggle_active: (w,  active=!w.get_active())  => {
+        if (!w[LOCKED]) w.set_active(active)
+    },
     set_modal: (w, v) => {
         if (w.set_modal)    return w.set_modal(v)
         if (w.set_autohide) return w.set_autohide(v)
@@ -212,10 +216,10 @@ function getPoly(gtk_version=null) {
         throw new Error(`activate() not implemented for ${w}`)
     },
     popup: (w) => {
-        if (typeof w.popdown == 'function') w.popup()
+        if (typeof w.popup == 'function') w.popup()
     },
     popdown: (w) => {
-        if (w.popdown) w.popdown()
+        if (typeof w.popdown == 'function') w.popdown()
     },
     getRoot: (w, gtk_class=Gtk.Window) => {
         const match = (widget) => widget instanceof gtk_class
@@ -224,10 +228,10 @@ function getPoly(gtk_version=null) {
 
         while (p != null) {
             let parent, window
-            if (p.get_parent) parent = p.get_parent()   // try to find parent
-            if (p.get_window) window = p.get_window()   // try to find parent window
+            if (p.get_parent) parent = p.get_parent()  // try to find parent
+            if (p.get_window) window = p.get_window()  // try to find parent window
 
-            // check any result is matching and set it as root and also as next parent
+            // check if any result is matching and set it as root and also as next parent
             if      (match(parent))  p = root = parent
             else if (match(window))  p = root = window
             // or just take the next non-null as next parent without setting as root

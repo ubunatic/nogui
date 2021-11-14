@@ -142,8 +142,7 @@ That's it! Here is what the app will look like.
 The example uses Node.js `require` which is not available in `gjs`.
 However, this is currently the [smartest way](https://stackoverflow.com/questions/38537256/how-can-i-include-files-with-gjs-gnome-javascript) of managing packages
 for GJS apps without having modifications of your `imports.searchPath`
-all over the place. Also for Gnome Extensions it is discouraged to modify
-the `searchPath` anyway.
+all over the place.
 
 Using `require` and `webpack` you can generate minified files (see [webpack.config.js](webpack.config.js))
 that include all required modules. This also allows you to use `npm` modules!

@@ -1,6 +1,6 @@
 {
   "name": "nogui",
-  "version": "1.0.43",
+  "version": "1.0.44",
   "description": "Render GTK controls from NoGui Spec",
   "main": "src/nogui.js",
   "scripts": {
@@ -8,11 +8,12 @@
     "build": "make build"
   },
   "dependencies": {
+    "google-protobuf": "^3.17.3",
     "json5": "^2.2.0",
-    "md2pango": "^1.0.2"
+    "md2pango": "^1.0.3"
   },
   "devDependencies": {
-    "nodemon": "^2.0.0",
+    "nodemon": "^2.0.15",
     "webpack": "^5.30.0",
     "webpack-cli": "^4.6.0"
   },

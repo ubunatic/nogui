@@ -155,11 +155,23 @@ class SongController extends SongPlayer {
         this.quitCallback()
     }
     quitCallback() { /* noop */ }
-    openFile()  {
-        const s = new Song(`Song "🎶 ${this.songs.length + 1} 🎶"`)
+    openFile(f='')  {
+        if (f == '') f = `Song "🎶 ${this.songs.length + 1} 🎶"`
+        const s = new Song(f)
         this.songs.push(s)
         print('added song', this.songs.slice(-1))
     }
+    /** @param {String[]} songs */
+    loadSongs(songs=[]) {
+        if (songs.length == 0) return
+        this.songs = []
+        for (const s of songs) this.songs.push(new Song(s))
+        print(`added ${this.songs.length} songs`)
+    }
+    /** NoGui Dialog response handler
+     * @param {number} id   GTK Dialog response code number
+     * @param {String} code NoGui Dialog response code string
+    */
     respClear(id, code) {
         if(code == 'OK') this.songs = []
     }

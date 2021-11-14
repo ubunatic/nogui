@@ -303,7 +303,7 @@ class Builder {
 
                 const { id } = b.bindObject(row.repeat, listChanged)
                 tbox.connect('unrealize', () => {
-                    debug(`buildTable: tbox.unrealize`)
+                    // debug(`buildTable: tbox.unrealize`)
                     tbox = null
                     b.unbind(id)
                 })

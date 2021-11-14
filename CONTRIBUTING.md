@@ -7,7 +7,7 @@
 6. Focus on GTK 4.0 first, but then also use and extend [nogui.poly](src/poly.js)
    to ensure GTK 3/4 compatibility.
 8. Ensure *teardown* of anything you *setup* such as bindings, scoped widget
-   variables, and anything they may leak memory in an reactive app.
+   variables, and anything that may leak memory in an reactive app.
 9. Add `/** @type {import('path/to/code.js')} */` annotations to GJS imports for
    better IDE support and see [src/modules.js](src/modules.js) for how to export
    module symbols correctly.
@@ -24,7 +24,7 @@
    * no semicolons, since modern JS engines and minifiers have super robust
      JS semicolon insertion (I did not have single issue so far!)
    * block-syntax statements where possible (esp. when multiple things need to be
-     switched, created, or returned, and are much more readable in as a "table")
+     switched, created, or returned, and are much more readable as a "table")
    * block-syntax end-of-line comments
    * block-syntax JS objects and JSON
    * block-syntax if-else without curlies
@@ -32,7 +32,7 @@
    * single-statement loop-bodies without curlies
    * switch-case fallthroughs (only with annotation though)
    * avoid repetition where possible, since extracting even small functions
-     allows for better statement "tables" and block-style code in general
+     allows for better "tables" and block-style code in general
    * create own utils to avoid big dependencies and to avoid bending existing
      frameworks to be compatible with webpacked GJS (e.g., nogui provides own
      [binding](src/binding.js), [assert](src/assert.js), [logging](src/logging.js)

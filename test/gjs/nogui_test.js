@@ -50,7 +50,7 @@ function testLogger(params) {
     debug('DEBUG', {debug:'it works!'})
     setSilent()
     log(banner)
-    error(new Error('ExampleSilentModeError'), 'must be visible in silent mode')
+    error(new Error('ExampleSilentModeError'), 'This must be visible in silent mode')
     setSilent(false)
     log('back to normal')
     log('OK testLogger')

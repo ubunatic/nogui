@@ -26,10 +26,9 @@ const opt = {
         'gi/shell': 'imports.gi.Shell',
         'ui/main': 'imports.ui.main',
         'ui/popupMenu': 'imports.ui.popupMenu',
-        'ui/panelMenu': 'imports.ui.panelMenu',        
+        'ui/panelMenu': 'imports.ui.panelMenu',
         'gi/st': 'imports.gi.St',
         'misc/config': 'imports.misc.config',
-        'me': 'imports.misc.extensionUtils.getCurrentExtension()',
     },
 }
 
